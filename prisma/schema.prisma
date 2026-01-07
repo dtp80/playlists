@@ -1,0 +1,290 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  // Local file-based database for desktop use (SQLite)
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Playlist {
+  id                           Int       @id @default(autoincrement())
+  userId                       Int // Owner of this playlist
+  name                         String
+  type                         String
+  url                          String
+  username                     String?
+  password                     String?
+  createdAt                    DateTime  @default(now())
+  updatedAt                    DateTime  @default(now()) @updatedAt
+  lastSyncedAt                 DateTime?
+  lastCategoriesSyncedAt       DateTime?
+  lastChannelsSyncedAt         DateTime?
+  sortOrder                    Int       @default(0)
+  identifierSource             String?
+  identifierRegex              String?
+  identifierMetadataKey        String?
+  hiddenCategories             String?
+  excludedChannels             String?
+  includeUncategorizedChannels Int       @default(1)
+  externalAccessEnabled        Int       @default(0)
+  externalAccessToken          String?
+  uniqueId                     String    @unique @default(uuid())
+  epgFileId                    Int? // Optional: Specific EPG file for this playlist
+  epgGroupId                   Int? // Optional: Specific EPG group for this playlist (null = use default)
+
+  // Relations
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  epgFile    EpgFile?   @relation(fields: [epgFileId], references: [id], onDelete: SetNull)
+  epgGroup   EpgGroup?  @relation(fields: [epgGroupId], references: [id], onDelete: SetNull)
+  categories Category[]
+  channels   Channel[]
+
+  @@index([userId])
+  @@index([uniqueId])
+  @@index([epgFileId])
+  @@index([epgGroupId])
+  @@map("playlists")
+}
+
+model Category {
+  id           Int    @id @default(autoincrement())
+  playlistId   Int
+  categoryId   String
+  categoryName String
+  parentId     Int?
+  isSelected   Int    @default(0)
+
+  // Relations
+  playlist Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+
+  @@unique([playlistId, categoryId])
+  @@index([playlistId])
+  @@map("categories")
+}
+
+model Channel {
+  id                Int     @id @default(autoincrement())
+  playlistId        Int
+  streamId          String
+  name              String
+  streamUrl         String
+  streamIcon        String?
+  epgChannelId      String?
+  categoryId        String?
+  categoryName      String?
+  added             String?
+  duration          String?
+  tvgId             String?
+  tvgName           String?
+  tvgLogo           String?
+  groupTitle        String?
+  timeshift         String?
+  tvgRec            String?
+  tvgChno           String?
+  catchup           String?
+  catchupDays       String?
+  catchupSource     String?
+  catchupCorrection String?
+  xuiId             String?
+  channelMapping    String?
+
+  // Relations
+  playlist Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+
+  @@unique([playlistId, streamId])
+  @@index([playlistId])
+  @@index([categoryId])
+  @@index([playlistId, name]) // Composite index for sorted channel listings
+  @@index([playlistId, categoryId]) // Composite index for category filtering
+  @@index([streamId]) // Index for streamId lookups during import
+  @@index([name]) // Index for name search queries
+  @@map("channels")
+}
+
+model ChannelLineup {
+  id        Int      @id @default(autoincrement())
+  userId    Int // Owner of this channel
+  epgFileId Int? // Optional: Link to specific EPG file
+  name      String
+  tvgLogo   String?
+  tvgId     String?
+  extGrp    String?
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  // Relations
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  epgFile EpgFile? @relation(fields: [epgFileId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, epgFileId, name])
+  @@index([userId])
+  @@index([epgFileId])
+  @@index([name])
+  @@index([extGrp])
+  @@index([sortOrder])
+  @@map("channel_lineup")
+}
+
+model EpgFile {
+  id           Int       @id @default(autoincrement())
+  userId       Int // Owner of this EPG file
+  epgGroupId   Int? // Optional: Part of an EPG group
+  name         String // User-friendly name for the EPG
+  url          String // EPG/XMLTV file URL
+  channelCount Int       @default(0)
+  isDefault    Boolean   @default(false) // Only one EPG can be default per user
+  lastSyncedAt DateTime? // Last time EPG was synced/updated
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @default(now()) @updatedAt
+
+  // Relations
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  epgGroup      EpgGroup?       @relation(fields: [epgGroupId], references: [id], onDelete: SetNull)
+  playlists     Playlist[]
+  channelLineup ChannelLineup[]
+
+  @@unique([userId, name])
+  @@index([userId])
+  @@index([epgGroupId])
+  @@map("epg_files")
+}
+
+model EpgGroup {
+  id        Int      @id @default(autoincrement())
+  userId    Int // Owner of this EPG group
+  name      String // User-friendly name for the group
+  url       String // Combined/merged EPG file URL
+  isDefault Boolean  @default(false) // Only one EPG/Group can be default per user
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  // Relations
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  epgFiles  EpgFile[] // EPG files in this group
+  playlists Playlist[]
+
+  @@unique([userId, name])
+  @@index([userId])
+  @@map("epg_groups")
+}
+
+model Setting {
+  key       String   @id
+  value     String?
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@map("settings")
+}
+
+model User {
+  id               Int      @id @default(autoincrement())
+  email            String   @unique
+  password         String
+  role             String
+  twoFactorSecret  String?
+  twoFactorEnabled Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @default(now()) @updatedAt
+
+  // Relations
+  playlists        Playlist[]
+  epgFiles         EpgFile[]
+  epgGroups        EpgGroup[]
+  channelLineup    ChannelLineup[]
+  epgImportJobs    EpgImportJob[]
+  playlistSyncJobs PlaylistSyncJob[]
+  importJobs       ImportJob[]
+
+  @@index([email])
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  sid       String   @unique
+  data      String
+  expiresAt DateTime
+
+  @@index([expiresAt])
+  @@map("session")
+}
+
+model EpgImportJob {
+  id               Int      @id @default(autoincrement())
+  userId           Int
+  epgFileId        Int? // Null until EPG file is created
+  name             String
+  url              String
+  status           String // "pending", "downloading", "parsing", "importing", "completed", "failed"
+  progress         Int      @default(0) // 0-100
+  message          String?
+  totalChannels    Int      @default(0)
+  importedChannels Int      @default(0)
+  downloadProgress Int      @default(0) // 0-100
+  importProgress   Int      @default(0) // 0-100
+  error            String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @default(now()) @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@map("epg_import_jobs")
+}
+
+model PlaylistSyncJob {
+  id              Int      @id @default(autoincrement())
+  userId          Int
+  playlistId      Int
+  status          String // "pending", "syncing", "saving", "completed", "failed"
+  progress        Int      @default(0) // 0-100
+  message         String?
+  totalChannels   Int      @default(0)
+  totalCategories Int      @default(0)
+  savedChannels   Int      @default(0)
+  channelsData    String?  // JSON string of fetched channels to avoid refetch on resume
+  categoriesData  String?  // JSON string of fetched categories (for debugging/restore)
+  categoryFilters String?  // JSON array of categoryIds to fetch (Xtream)
+  error           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @default(now()) @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([playlistId])
+  @@index([status])
+  @@map("playlist_sync_jobs")
+}
+
+model ImportJob {
+  id                           Int      @id @default(autoincrement())
+  userId                       Int
+  playlistId                   Int
+  status                       String // "pending", "processing", "completed", "failed"
+  progress                     Int      @default(0) // 0-100
+  message                      String?
+  totalMappings                Int      @default(0)
+  processedMappings            Int      @default(0)
+  mapped                       Int      @default(0)
+  notFound                     Int      @default(0)
+  importData                   String?  // JSON string of imported channels data
+  channelsInJsonNotInPlaylist  String?  // JSON array of channels from import not found in playlist
+  channelsInPlaylistNotInJson  String?  // JSON array of channels from playlist not in import
+  error                        String?
+  createdAt                    DateTime @default(now())
+  updatedAt                    DateTime @default(now()) @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([playlistId])
+  @@index([status])
+  @@map("import_jobs")
+}

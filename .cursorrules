@@ -1,0 +1,637 @@
+# IPTV Playlist Manager - Cursor Rules
+
+## Project Overview
+This is an IPTV playlist management application that allows users to sync, filter, map, and export IPTV playlists (M3U/Xtream Codes) with EPG (Electronic Program Guide) integration.
+
+## Tech Stack
+- **Frontend**: React + TypeScript + Vite
+- **Backend**: Node.js + Express + TypeScript
+- **Database**: PostgreSQL (Aiven Free Tier)
+- **ORM**: Prisma
+- **Deployment**: Vercel Hobby Plan (Free Tier)
+
+---
+
+## ⚠️ CRITICAL CONSTRAINTS - READ FIRST
+
+### 1. Vercel Hobby Plan Limits
+- **Max execution time**: 10 seconds per serverless function
+- **No background jobs**: Functions must complete within 10s or timeout
+- **Cold starts**: First request may be slower
+- **Memory**: 1024 MB per function
+
+### 2. Aiven Free Tier PostgreSQL Limits
+- **Max connections**: 25 total connections (shared across all functions)
+- **Connection pooling**: REQUIRED - use PgBouncer mode
+- **Concurrent functions**: Each Vercel function = 1-3 connections
+- **Connection pool exhaustion**: Common cause of "Timed out fetching connection" errors
+
+### 3. Current Prisma Connection Settings
+```typescript
+connection_limit: 3        // Max 3 connections per function instance
+pool_timeout: 20           // 20 seconds to wait for connection
+connect_timeout: 10        // 10 seconds to establish connection
+pgbouncer: true           // MUST be enabled for Aiven
+```
+
+---
+
+## 🚨 MANDATORY PATTERNS - ALWAYS FOLLOW
+
+### Pattern 1: Async Jobs for Long Operations (>5 seconds)
+
+**NEVER** run long operations synchronously in API routes.
+
+**❌ WRONG:**
+```typescript
+router.post("/sync", async (req, res) => {
+  const data = await fetchLargeDataset();  // Takes 30s
+  await processData(data);                  // Takes 20s
+  res.json({ success: true });              // ❌ Timeout at 10s!
+});
+```
+
+**✅ CORRECT:**
+```typescript
+// Step 1: Create job and return immediately
+router.post("/sync", async (req, res) => {
+  const jobId = await createSyncJob(playlistId);
+  res.json({ jobId, status: "pending" });  // Returns in <1s
+});
+
+// Step 2: Polling endpoint processes chunks
+router.get("/sync/job/:id", async (req, res) => {
+  let job = await getJobStatus(jobId);
+  
+  if (job.status === "pending" || job.status === "processing") {
+    await processChunk(jobId, 8000);  // Max 8s per chunk
+    job = await getJobStatus(jobId);
+  }
+  
+  res.json(job);  // Returns current status
+});
+```
+
+**Examples in codebase:**
+- `PlaylistSyncJob` - Async playlist sync
+- `EpgImportJob` - Async EPG import
+- Both use polling pattern to stay under 10s limit
+
+### Pattern 2: Batch Database Operations
+
+**NEVER** run database operations in a loop without batching.
+
+**❌ WRONG (Connection Pool Exhaustion):**
+```typescript
+for (const channel of channels) {
+  await prisma.channel.update({  // ❌ 1000 channels = 1000 queries
+    where: { id: channel.id },
+    data: { name: channel.name }
+  });
+}
+```
+
+**✅ CORRECT (Batched Updates):**
+```typescript
+// Option 1: Batch with createMany/updateMany
+const BATCH_SIZE = 100;
+for (let i = 0; i < channels.length; i += BATCH_SIZE) {
+  const batch = channels.slice(i, i + BATCH_SIZE);
+  
+  await prisma.channel.createMany({
+    data: batch,
+    skipDuplicates: true
+  });
+}
+
+// Option 2: Parallel batches with Promise.all
+const BATCH_SIZE = 50;
+for (let i = 0; i < channels.length; i += BATCH_SIZE) {
+  const batch = channels.slice(i, i + BATCH_SIZE);
+  
+  await Promise.all(
+    batch.map(ch => 
+      prisma.channel.updateMany({
+        where: { streamId: ch.streamId },
+        data: { channelMapping: ch.mapping }
+      })
+    )
+  );
+}
+```
+
+**Guidelines:**
+- Batch size: 50-100 for `createMany`/`updateMany`
+- Batch size: 20-50 for `Promise.all` with individual queries
+- Log progress every N batches
+- Use transactions sparingly (they hold connections longer)
+
+### Pattern 3: Efficient Data Fetching
+
+**❌ WRONG:**
+```typescript
+// Fetching all data, then filtering in memory
+const allChannels = await prisma.channel.findMany();
+const filtered = allChannels.filter(ch => ch.categoryId === catId);
+```
+
+**✅ CORRECT:**
+```typescript
+// Filter in database, only fetch what you need
+const channels = await prisma.channel.findMany({
+  where: { categoryId: catId },
+  select: {  // Only select needed fields
+    id: true,
+    name: true,
+    streamUrl: true,
+    // Don't fetch large fields if not needed
+  }
+});
+```
+
+### Pattern 4: Connection Management
+
+**Key Principles:**
+1. **Reuse Prisma client**: Use singleton pattern (already implemented in `src/database/prisma.ts`)
+2. **Close connections**: Prisma handles this, but be mindful of long-running operations
+3. **Monitor connection usage**: Log database operations in complex endpoints
+4. **Fail fast**: Use timeouts to prevent hanging connections
+
+**Example with timeout:**
+```typescript
+const fetchWithTimeout = async (url: string, timeoutMs: number) => {
+  return Promise.race([
+    fetch(url),
+    new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Timeout')), timeoutMs)
+    )
+  ]);
+};
+```
+
+---
+
+## 📋 DATABASE QUERY CHECKLIST
+
+Before writing any database query, check:
+
+- [ ] **Is this in a loop?** → Use batch operations
+- [ ] **How many records?** → If >1000, use pagination or async job
+- [ ] **How long will this take?** → If >5s, use async job pattern
+- [ ] **Am I fetching all fields?** → Use `select` to limit data
+- [ ] **Do I need transactions?** → Only if atomic updates are critical
+- [ ] **Am I creating multiple connections?** → Reuse Prisma client singleton
+- [ ] **Did I add logging?** → Log start/end times and counts for complex operations
+
+---
+
+## 🎯 COMMON OPERATIONS - REFERENCE
+
+### Importing Large Datasets
+```typescript
+// ✅ Async job with chunked processing
+router.post("/import", async (req, res) => {
+  const jobId = await createImportJob(userId, data);
+  res.json({ jobId });
+});
+
+router.get("/import/job/:id", async (req, res) => {
+  const job = await getJob(jobId);
+  
+  if (job.status === "pending") {
+    // Process one chunk (max 8 seconds)
+    await processImportChunk(jobId, 8000);
+  }
+  
+  res.json(await getJob(jobId));
+});
+```
+
+### Syncing External Data
+```typescript
+// ✅ Multi-phase async job
+1. Fetch phase: Download data from provider
+2. Parse phase: Parse M3U/XML/JSON
+3. Save phase: Batch insert to database
+4. Each phase = separate polling request
+```
+
+### Bulk Updates
+```typescript
+// ✅ Batch with progress logging
+const BATCH_SIZE = 100;
+let processed = 0;
+
+for (let i = 0; i < items.length; i += BATCH_SIZE) {
+  const batch = items.slice(i, i + BATCH_SIZE);
+  
+  await prisma.item.updateMany({
+    where: { id: { in: batch.map(b => b.id) } },
+    data: { status: "processed" }
+  });
+  
+  processed += batch.length;
+  console.log(`Processed ${processed}/${items.length}`);
+}
+```
+
+### Preserving User Data During Sync
+```typescript
+// ✅ CRITICAL: Always preserve user customizations
+// 1. Fetch existing user data BEFORE delete
+const existingMappings = await prisma.channel.findMany({
+  where: { playlistId, channelMapping: { not: null } },
+  select: { streamId: true, channelMapping: true }
+});
+
+const mappingMap = new Map(
+  existingMappings.map(m => [m.streamId, m.channelMapping])
+);
+
+// 2. Delete old data
+await prisma.channel.deleteMany({ where: { playlistId } });
+
+// 3. Insert new data WITH restored mappings
+await prisma.channel.createMany({
+  data: newChannels.map(ch => ({
+    ...ch,
+    channelMapping: mappingMap.get(ch.streamId) || null  // ← CRITICAL
+  }))
+});
+```
+
+---
+
+## 🐛 DEBUGGING TIPS
+
+### Connection Pool Issues
+**Error:** `Timed out fetching a new connection from the connection pool`
+
+**Causes:**
+1. Too many sequential queries (use batching)
+2. Long-running operations (use async jobs)
+3. Forgotten transactions (always commit/rollback)
+4. Connection leaks (check for unclosed operations)
+
+**Debug:**
+```typescript
+// Add to problematic endpoint
+console.log(`[DB] Starting operation with ${items.length} items`);
+const start = Date.now();
+
+// ... your database operations ...
+
+console.log(`[DB] Completed in ${Date.now() - start}ms`);
+```
+
+### Vercel Timeouts
+**Error:** `Function exceeded the maximum execution time (10s)`
+
+**Solutions:**
+1. Convert to async job pattern (if operation >5s)
+2. Reduce batch size (if doing bulk operations)
+3. Add timeout to external API calls
+4. Skip optional operations (e.g., don't fetch provider EPG during sync)
+
+**Debug:**
+```typescript
+// Add timestamps to track slow operations
+const phases = {
+  fetch: 0,
+  parse: 0,
+  save: 0
+};
+
+const t1 = Date.now();
+const data = await fetchData();
+phases.fetch = Date.now() - t1;
+
+const t2 = Date.now();
+const parsed = parseData(data);
+phases.parse = Date.now() - t2;
+
+const t3 = Date.now();
+await saveData(parsed);
+phases.save = Date.now() - t3;
+
+console.log('Phases:', phases);
+```
+
+---
+
+## 🎨 FRONTEND BEST PRACTICES
+
+### Loading States
+Always show loading indicators for async operations:
+```typescript
+const [loading, setLoading] = useState(false);
+
+const handleOperation = async () => {
+  try {
+    setLoading(true);
+    await api.operation();
+  } finally {
+    setLoading(false);
+  }
+};
+
+// In JSX
+{loading && <LoadingOverlay />}
+```
+
+### Polling for Async Jobs
+```typescript
+useEffect(() => {
+  if (!jobId) return;
+  
+  const pollInterval = setInterval(async () => {
+    const job = await api.getJobStatus(jobId);
+    
+    if (job.status === 'completed' || job.status === 'failed') {
+      clearInterval(pollInterval);
+      // Handle completion
+    }
+  }, 1500);  // Poll every 1.5 seconds
+  
+  return () => clearInterval(pollInterval);
+}, [jobId]);
+```
+
+### Lazy Loading for Large Lists
+```typescript
+// Don't load all 20k+ channels at once
+const shouldLoad = 
+  (channelCount < 10000) ||  // Small playlists: always load
+  (hasFilters) ||            // Has filters: load filtered
+  (selectedCategory) ||       // Category selected: load category
+  (searchTerm);              // Searching: load search results
+
+if (!shouldLoad) {
+  return <EmptyState message="Select a category or search" />;
+}
+```
+
+---
+
+## 📝 CODE REVIEW CHECKLIST
+
+Before submitting/committing code:
+
+**Database Operations:**
+- [ ] No unbatched loops with database queries
+- [ ] Batch size is reasonable (50-100)
+- [ ] Using `select` to limit fetched fields
+- [ ] Logging for operations with >100 records
+- [ ] User data preservation logic for sync operations
+
+**API Endpoints:**
+- [ ] Long operations (>5s) use async job pattern
+- [ ] External API calls have timeouts
+- [ ] Error handling with try/catch
+- [ ] Appropriate HTTP status codes
+- [ ] Input validation
+
+**Async Jobs:**
+- [ ] Job creation returns immediately (<1s)
+- [ ] Polling endpoint processes in chunks (<8s)
+- [ ] Job status persisted in database
+- [ ] Error messages captured in job record
+- [ ] Progress tracking (percentage/counts)
+
+**Frontend:**
+- [ ] Loading states for async operations
+- [ ] Error messages displayed to user
+- [ ] Optimistic updates where appropriate
+- [ ] Lazy loading for large datasets
+- [ ] Console logs for debugging (removable in production)
+
+---
+
+## 🔄 MIGRATION GUIDE
+
+### Adding New Long-Running Operation
+
+1. **Create Job Model** (in `prisma/schema.prisma`):
+```prisma
+model MyOperationJob {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  status    String   // "pending", "processing", "completed", "failed"
+  progress  Int      @default(0)
+  message   String?
+  error     String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([status])
+  @@map("my_operation_jobs")
+}
+```
+
+2. **Create Service** (in `src/services/my-operation-job.service.ts`):
+```typescript
+export class MyOperationJobService {
+  static async createJob(userId: number, params: any): Promise<number> {
+    const job = await prisma.myOperationJob.create({
+      data: { userId, status: "pending", progress: 0 }
+    });
+    return job.id;
+  }
+  
+  static async processChunk(jobId: number, maxDuration: number = 8000) {
+    const startTime = Date.now();
+    const job = await prisma.myOperationJob.findUnique({ where: { id: jobId } });
+    
+    // Process in chunks, check time regularly
+    while (Date.now() - startTime < maxDuration) {
+      // Do work...
+      
+      // Update progress
+      await prisma.myOperationJob.update({
+        where: { id: jobId },
+        data: { progress: newProgress, updatedAt: new Date() }
+      });
+    }
+  }
+  
+  static async getJobStatus(jobId: number) {
+    return await prisma.myOperationJob.findUnique({ where: { id: jobId } });
+  }
+}
+```
+
+3. **Add Routes** (in appropriate route file):
+```typescript
+router.post("/operation", async (req, res) => {
+  const userId = (req as any).session.user.id;
+  const jobId = await MyOperationJobService.createJob(userId, req.body);
+  res.json({ jobId, status: "pending" });
+});
+
+router.get("/operation/job/:id", async (req, res) => {
+  const jobId = parseInt(req.params.id);
+  let job = await MyOperationJobService.getJobStatus(jobId);
+  
+  if (job.status === "pending" || job.status === "processing") {
+    await MyOperationJobService.processChunk(jobId, 8000);
+    job = await MyOperationJobService.getJobStatus(jobId);
+  }
+  
+  res.json(job);
+});
+```
+
+4. **Add Frontend Polling** (in React component):
+```typescript
+const [jobId, setJobId] = useState<number | null>(null);
+const [progress, setProgress] = useState(0);
+
+const handleOperation = async () => {
+  const { jobId } = await api.startOperation();
+  setJobId(jobId);
+  
+  // Poll for status
+  const interval = setInterval(async () => {
+    const job = await api.getOperationJob(jobId);
+    setProgress(job.progress);
+    
+    if (job.status === 'completed' || job.status === 'failed') {
+      clearInterval(interval);
+      // Handle result
+    }
+  }, 1500);
+};
+```
+
+---
+
+## 📚 REFERENCE IMPLEMENTATIONS
+
+### Existing Async Jobs
+1. **`src/services/playlist-sync-job.service.ts`**
+   - Syncs playlists from M3U/Xtream providers
+   - Preserves channel mappings during sync
+   - Batched channel saves (5000 per batch)
+
+2. **`src/services/epg-job.service.ts`**
+   - Imports large EPG files (XMLTV)
+   - Handles gzip decompression
+   - Batched channel imports (200 per batch)
+   - Resumes from last position on timeout
+
+### Existing Batch Operations
+1. **`src/repositories/playlist.repository.ts` → `saveChannels`**
+   - Preserves user mappings
+   - Batch size: 5000 channels
+   - Fast Map-based lookup for mappings
+
+2. **`src/routes/playlist.routes.ts` → Import endpoint**
+   - Batched updates with Promise.all
+   - Batch size: 50 parallel updates
+   - Progress logging
+
+---
+
+## 🚀 PERFORMANCE BENCHMARKS
+
+### Acceptable Response Times
+- **Simple queries**: <100ms
+- **List endpoints**: <500ms
+- **Batch operations**: <2s per 100 items
+- **Async job creation**: <500ms
+- **Async job polling**: <8s per chunk
+
+### Database Query Targets
+- **Single record fetch**: <10ms
+- **List query (100 records)**: <50ms
+- **Batch insert (1000 records)**: <500ms
+- **Complex join**: <200ms
+
+If you're exceeding these, consider:
+- Adding database indexes
+- Reducing fetched fields
+- Using async jobs
+- Implementing caching
+
+---
+
+## 🔐 SECURITY NOTES
+
+1. **Always validate user ownership**:
+```typescript
+const playlist = await prisma.playlist.findFirst({
+  where: { id: playlistId, userId: req.session.user.id }
+});
+if (!playlist) return res.status(404).json({ error: "Not found" });
+```
+
+2. **Use parameterized queries** (Prisma does this automatically)
+
+3. **Sanitize user input** before database operations
+
+4. **Rate limit expensive operations** (consider implementing)
+
+---
+
+## ❓ QUESTIONS TO ASK
+
+When implementing new features:
+
+1. **How much data are we processing?**
+   - <100 records: Direct operation OK
+   - 100-1000 records: Batch operation
+   - >1000 records: Async job pattern
+
+2. **How long will this take?**
+   - <5 seconds: Direct endpoint OK
+   - 5-10 seconds: Risky, consider async
+   - >10 seconds: MUST use async job
+
+3. **Are we modifying user data?**
+   - Always preserve user customizations during sync/update
+   - Fetch existing data before delete
+   - Restore after insert
+
+4. **What happens on failure?**
+   - Capture error in job record
+   - Show user-friendly message
+   - Log detailed error for debugging
+   - Allow retry if appropriate
+
+---
+
+## 🎓 LEARNING RESOURCES
+
+- **Prisma Best Practices**: https://www.prisma.io/docs/guides/performance-and-optimization
+- **Vercel Limits**: https://vercel.com/docs/concepts/limits/overview
+- **Connection Pooling**: https://www.prisma.io/docs/guides/performance-and-optimization/connection-management
+- **Async Patterns**: See `src/services/*-job.service.ts` for examples
+
+---
+
+## 📞 COMMON ERROR SOLUTIONS
+
+### "Timed out fetching a new connection"
+→ Reduce `connection_limit`, batch operations, use async jobs
+
+### "Function execution timeout (10s)"
+→ Convert to async job pattern with polling
+
+### "Memory limit exceeded"
+→ Process data in smaller chunks, don't load all into memory
+
+### "Too many connections"
+→ Check for connection leaks, reduce concurrent operations
+
+---
+
+**Remember**: When in doubt, err on the side of:
+- Smaller batches
+- Async jobs
+- More logging
+- Conservative connection usage
+
+This ensures the app works reliably on free tier infrastructure!

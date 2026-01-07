@@ -1,0 +1,29 @@
+{
+  "cSpell.enabled": false,
+  "cSpell.diagnosticLevel": "Hint",
+  "markdown.validate.enabled": false,
+  "spellright.language": [],
+  "spellright.documentTypes": [],
+  "spellright.notificationClass": "error",
+  "spellright.spellContext": "body",
+  "spellright.spellContextByClass": {},
+  "files.exclude": {},
+  "files.watcherExclude": {
+    "**/README.md": true
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/dist": true
+  },
+  "[markdown]": {
+    "editor.defaultFormatter": null,
+    "editor.formatOnSave": false,
+    "files.trimTrailingWhitespace": false
+  },
+  "eslint.validate": [
+    "javascript",
+    "javascriptreact",
+    "typescript",
+    "typescriptreact"
+  ]
+}

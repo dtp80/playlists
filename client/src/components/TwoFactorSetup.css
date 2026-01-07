@@ -1,0 +1,141 @@
+.two-factor-setup {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 2rem;
+}
+
+.setup-box {
+  background-color: var(--bg-primary);
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  padding: 3rem;
+  width: 100%;
+  max-width: 520px;
+  animation: slideUp 0.4s ease-out;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.setup-header {
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+.setup-header h2 {
+  font-size: 1.75rem;
+  margin: 0 0 0.5rem 0;
+  color: var(--text-primary);
+}
+
+.setup-header p {
+  font-size: 1rem;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.qr-code-container {
+  display: flex;
+  justify-content: center;
+  margin: 2rem 0;
+  padding: 1.5rem;
+  background-color: white;
+  border-radius: 12px;
+}
+
+.qr-code {
+  max-width: 250px;
+  width: 100%;
+  height: auto;
+}
+
+.secret-container {
+  text-align: center;
+  margin: 2rem 0;
+}
+
+.secret-label {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.75rem;
+}
+
+.secret-code {
+  display: inline-block;
+  background-color: var(--bg-secondary);
+  padding: 0.875rem 1.25rem;
+  border-radius: 8px;
+  font-family: "Courier New", monospace;
+  font-size: 1rem;
+  color: var(--accent-primary);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  border: 2px solid var(--border-color);
+  word-break: break-all;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.setup-instructions {
+  background-color: var(--bg-secondary);
+  padding: 1.5rem;
+  border-radius: 12px;
+  margin: 2rem 0;
+}
+
+.setup-instructions h3 {
+  font-size: 1rem;
+  margin: 0 0 1rem 0;
+  color: var(--text-primary);
+}
+
+.setup-instructions ol {
+  margin: 0;
+  padding-left: 1.5rem;
+  color: var(--text-secondary);
+  line-height: 1.8;
+}
+
+.setup-instructions li {
+  margin-bottom: 0.5rem;
+}
+
+.setup-actions {
+  display: flex;
+  gap: 1rem;
+  margin-top: 2rem;
+}
+
+.setup-actions .btn {
+  flex: 1;
+  padding: 0.875rem;
+  font-size: 1rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.loading,
+.error-message {
+  text-align: center;
+  padding: 3rem;
+  font-size: 1.1rem;
+  color: var(--text-secondary);
+}
+
+.error-message {
+  color: #c33;
+  background-color: #fee;
+  border-radius: 8px;
+  margin-bottom: 1.5rem;
+}

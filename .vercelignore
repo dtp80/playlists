@@ -1,0 +1,29 @@
+# Development files
+.env.local
+.env.development
+.env.test
+*.log
+
+# Database files
+data/
+*.db
+*.db-*
+
+# Documentation (keep README.md for repo, but exclude from deployment)
+*.md
+
+# Scripts
+src/scripts/
+
+# IDE
+.vscode/
+.idea/
+
+# Git
+.git/
+.gitignore
+
+# Testing
+coverage/
+*.test.ts
+*.spec.ts
