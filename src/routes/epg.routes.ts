@@ -408,28 +408,73 @@ router.post("/:id/import-json", async (req: Request, res: Response) => {
     }
     const allEntries = [...orderedEntries, ...defaultEntries];
 
-    let updated = 0;
-    let sortOrderCounter = 0;
+    // Deduplicate by name to avoid unique constraint hits; keep first occurrence
+    const seenNames = new Set<string>();
+    const entries: Array<{ name: string; tvgId: string; tvgLogo?: string; extGrp?: string }> =
+      [];
     for (const [name, data] of allEntries) {
-      if (!data?.tvgId) continue; // tvgId required
-      const tvgId = (data.tvgId as string).trim();
+      const tvgId = (data?.tvgId as string | undefined)?.trim();
       if (!tvgId) continue;
-      const tvgLogo = data.tvgLogo ? String(data.tvgLogo) : undefined;
-      const extGrp = data.extGrp ? String(data.extGrp) : undefined;
+      if (seenNames.has(name)) continue;
+      seenNames.add(name);
+      entries.push({
+        name,
+        tvgId,
+        tvgLogo: data?.tvgLogo ? String(data.tvgLogo) : undefined,
+        extGrp: data?.extGrp ? String(data.extGrp) : undefined,
+      });
+    }
 
-      const result = await prisma.channelLineup.updateMany({
-        where: { userId, epgFileId, tvgId },
-        data: {
+    // Get current max sortOrder to append new/updated entries at the end
+    const maxSort = await prisma.channelLineup.findFirst({
+      where: { userId, epgFileId },
+      orderBy: { sortOrder: "desc" },
+      select: { sortOrder: true },
+    });
+    let sortOrderCounter = (maxSort?.sortOrder || 0) + 1;
+
+    let updated = 0;
+    let created = 0;
+
+    // Upsert per entry by unique (userId, epgFileId, name) to avoid P2002 on name conflicts
+    for (const entry of entries) {
+      const { name, tvgId, tvgLogo, extGrp } = entry;
+      const where = {
+        userId_epgFileId_name: {
+          userId,
+          epgFileId,
           name,
+        },
+      } as const;
+
+      const existing = await prisma.channelLineup.findUnique({ where });
+      if (existing) {
+        updated += 1;
+      } else {
+        created += 1;
+      }
+
+      await prisma.channelLineup.upsert({
+        where,
+        create: {
+          userId,
+          epgFileId,
+          name,
+          tvgId,
           tvgLogo: tvgLogo || null,
-          extGrp: extGrp || undefined,
+          extGrp: extGrp || null,
+          sortOrder: sortOrderCounter++,
+        },
+        update: {
+          tvgId,
+          tvgLogo: tvgLogo || null,
+          extGrp: extGrp || null,
           sortOrder: sortOrderCounter++,
         },
       });
-      updated += result.count;
     }
 
-    return res.json({ success: true, updated });
+    return res.json({ success: true, updated, created, total: entries.length });
   } catch (error: any) {
     console.error("Import EPG JSON error:", error);
     res.status(500).json({ error: "Failed to import EPG JSON: " + error.message });

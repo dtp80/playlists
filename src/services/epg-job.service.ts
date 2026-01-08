@@ -1,5 +1,14 @@
 import prisma from "../database/prisma";
 import { EPGService, EPGFileTooLargeError } from "./epg.service";
+import fs from "fs";
+import os from "os";
+import path from "path";
+import axios from "axios";
+
+// Track in-flight downloads so we don't block the poll response
+const inFlightDownloads: Map<number, Promise<void>> = new Map();
+// Track corruption retries per job to avoid infinite loops
+const downloadRetries: Map<number, number> = new Map();
 
 export interface EpgImportJob {
   id: number;
@@ -114,10 +123,27 @@ export class EpgJobService {
     id: number,
     data: Partial<Omit<EpgImportJob, "id" | "userId" | "createdAt">>
   ): Promise<void> {
-    await prisma.epgImportJob.update({
-      where: { id },
-      data,
-    });
+    // SQLite can transiently lock and raise P1008 under heavy writes.
+    // Retry a few times with backoff to avoid crashing the job loop.
+    const MAX_ATTEMPTS = 5;
+    let attempt = 0;
+    while (true) {
+      try {
+        await prisma.epgImportJob.update({
+          where: { id },
+          data,
+        });
+        return;
+      } catch (err: any) {
+        const isTimeout = err?.code === "P1008";
+        attempt += 1;
+        if (!isTimeout || attempt >= MAX_ATTEMPTS) {
+          throw err;
+        }
+        const backoff = 100 * attempt; // simple linear backoff
+        await new Promise((r) => setTimeout(r, backoff));
+      }
+    }
   }
 
   /**
@@ -150,210 +176,219 @@ export class EpgJobService {
     console.log(`   Name: ${job.name}`);
 
     try {
-      // Step 1: Download and stream-parse in one go to avoid huge strings
-      if (job.status === "pending") {
-        console.log(`   📥 PHASE 1: DOWNLOAD`);
-        console.log(`   Starting download for job ${jobId}...`);
+      const tempDir = path.join(os.tmpdir(), "epg-jobs");
+      const xmlPath = path.join(tempDir, `job-${jobId}.xmltv`);
+      const channelsPath = path.join(tempDir, `job-${jobId}.channels.json`);
+      await fs.promises.mkdir(tempDir, { recursive: true });
 
-        const updateStart = Date.now();
+      const loadCachedChannels = async (): Promise<any[] | null> => {
+        if (fs.existsSync(channelsPath)) {
+          const raw = await fs.promises.readFile(channelsPath, "utf-8");
+          return JSON.parse(raw);
+        }
+        return null;
+      };
+
+      const cleanTempFiles = async () => {
+        await Promise.all([
+          fs.promises.rm(xmlPath, { force: true }).catch(() => {}),
+          fs.promises.rm(channelsPath, { force: true }).catch(() => {}),
+        ]);
+      };
+
+      const bufferDownloadFallback = async (): Promise<boolean> => {
+        try {
+          const resp = await axios.get<ArrayBufferLike>(job.url, {
+            responseType: "arraybuffer",
+            timeout: 120000,
+            maxRedirects: 5,
+            headers: {
+              "User-Agent": "IPTV-Playlist-Manager/1.0",
+              Accept: "application/xml, text/xml, application/octet-stream, */*",
+              // Avoid compression issues; we'll handle gzip manually if needed
+              "Accept-Encoding": "identity",
+            },
+          });
+          await fs.promises.mkdir(path.dirname(xmlPath), { recursive: true });
+          await fs.promises.writeFile(xmlPath, Buffer.from(resp.data));
+          return true;
+        } catch (e) {
+          console.warn(`   ⚠️ Buffer download fallback failed: ${(e as any)?.message || e}`);
+          return false;
+        }
+      };
+
+      const isCorruptGzipError = (err: any) => {
+        const msg = (err?.message || "").toLowerCase();
+        return err?.code === "Z_BUF_ERROR" || msg.includes("unexpected end of file");
+      };
+
+      const parseAndCache = async (): Promise<any[]> => {
+        try {
+          const channels = await EPGService.parseEPGFromFile(xmlPath, async (read, total) => {
+            // Map parse progress softly into 30-40 range if download already complete
+            if (total) {
+              const progress = 30 + Math.min(10, Math.floor((read / total) * 10));
+              await this.updateJob(jobId, {
+                progress,
+                downloadProgress: 100,
+                message: `Parsing EPG... ${((read / (1024 * 1024)) || 0).toFixed(1)}MB`,
+              } as any);
+            }
+          });
+          await fs.promises.writeFile(channelsPath, JSON.stringify(channels));
+          return channels;
+        } catch (err: any) {
+          if (isCorruptGzipError(err)) {
+            const retry = (downloadRetries.get(jobId) || 0) + 1;
+            downloadRetries.set(jobId, retry);
+            console.warn(
+              `   ⚠️ Corrupted EPG download detected (retry ${retry}). Error: ${err.message}`
+            );
+            await cleanTempFiles();
+            // Try a one-time buffer download fallback before counting a retry
+            const fallbackOk = await bufferDownloadFallback();
+            if (fallbackOk) {
+              try {
+                const channels = await parseAndCache();
+                downloadRetries.delete(jobId);
+                return channels;
+              } catch (innerErr: any) {
+                if (!isCorruptGzipError(innerErr)) throw innerErr;
+              }
+            }
+
+            if (retry >= 3) {
+              await this.updateJob(jobId, {
+                status: "failed",
+                progress: 40,
+                downloadProgress: 0,
+                message: "EPG download corrupted repeatedly. Please retry later.",
+                error: err.message,
+              });
+              return [];
+            }
+            await this.updateJob(jobId, {
+              status: "pending",
+              progress: 0,
+              downloadProgress: 0,
+              message: `EPG download corrupted. Retrying (${retry}/3)...`,
+            });
+            return [];
+          }
+          throw err;
+        }
+      };
+
+      const ensureDownloadOnce = async () => {
+        if (fs.existsSync(xmlPath)) return true;
+
+        // If a download is already in-flight, just return and let polling continue
+        if (inFlightDownloads.has(jobId)) {
+          return false;
+        }
+
+        console.log(`   📥 Downloading EPG once to ${xmlPath}`);
+
+        const downloadPromise = (async () => {
+          try {
+            await this.updateJob(jobId, {
+              status: "downloading",
+              progress: 5,
+              message: "Downloading EPG file...",
+            });
+
+            // Download without stepwise progress updates (avoid EOF-trigger loops)
+            await EPGService.downloadToTempFile(job.url, xmlPath, undefined);
+
+            await this.updateJob(jobId, {
+              downloadProgress: 100,
+              progress: 40,
+              message: "Download complete. Parsing...",
+            } as any);
+          } catch (err) {
+            await this.updateJob(jobId, {
+              status: "failed",
+              error: (err as any)?.message || "Download failed",
+              message: `Download failed: ${(err as any)?.message || "Unknown error"}`,
+            });
+          } finally {
+            inFlightDownloads.delete(jobId);
+          }
+        })();
+
+        inFlightDownloads.set(jobId, downloadPromise);
+        return false; // indicate that download is in-flight
+      };
+
+      const getChannels = async (): Promise<any[]> => {
+        const cached = await loadCachedChannels();
+        if (cached) return cached;
+        const ready = await ensureDownloadOnce();
+        if (!ready) {
+          // Download still in-flight; let caller return and poll again
+          return [];
+        }
+        if (fs.existsSync(xmlPath)) {
+          const channels = await parseAndCache();
+          return channels;
+        }
+        // If download claims done but file missing, fail fast to avoid loops
         await this.updateJob(jobId, {
-          status: "downloading",
-          progress: 5,
-          message: "Downloading EPG file...",
+          status: "failed",
+          progress: 0,
+          downloadProgress: 0,
+          message: "EPG file missing after download. Please retry.",
         });
-        console.log(
-          `   ✅ Status updated to "downloading" in ${
-            Date.now() - updateStart
-          }ms`
-        );
+        return [];
+      };
 
-        const downloadStart = Date.now();
-        let lastUpdate = 0;
-        let firstProgressSent = false;
-        const channels = await EPGService.importEPGStream(job.url, async (read, total) => {
-          const now = Date.now();
-          if (!firstProgressSent || now - lastUpdate >= 500) {
-            lastUpdate = now;
-            firstProgressSent = true;
-          } else {
-            return; // throttle updates
-          }
-
-          // Map progress from 5 -> 40 during download/parse
-          let progress = 5;
-          if (total && total > 0) {
-            progress = 5 + Math.min(35, Math.floor((read / total) * 35));
-          } else {
-            // Fallback: estimate with 600MB cap
-            const readMB = read / (1024 * 1024);
-            progress = 5 + Math.min(35, Math.floor((readMB / 600) * 35));
-          }
-
-          await this.updateJob(jobId, {
-            progress,
-            downloadProgress: Math.min(progress, 40),
-            message: `Downloading EPG... ${((read / (1024 * 1024)) || 0).toFixed(1)}MB`,
-          } as any);
-        });
-        const downloadDuration = Date.now() - downloadStart;
-
-        console.log(
-          `   ✅ Downloaded & parsed EPG in ${downloadDuration}ms, channels: ${channels.length}`
-        );
-
-        // Move directly to importing
-        const updateStart2 = Date.now();
+      // PHASE: prepare channels (no re-downloads on resume)
+      let channels: any[] | null = null;
+      if (job.status === "pending" || job.status === "downloading" || job.status === "parsing") {
+        console.log(`   📥 Preparing channels (download+parse once, then cache)...`);
+        channels = await getChannels();
+        if (!channels || channels.length === 0) {
+          console.log(`   ⏳ Download still in progress; will continue next poll`);
+          return false;
+        }
         await this.updateJob(jobId, {
           status: "importing",
-          progress: 40,
+          progress: Math.max(40, job.progress || 0),
           downloadProgress: 100,
           importProgress: 0,
           message: `Parsed ${channels.length.toLocaleString()} channels. Importing...`,
           totalChannels: channels.length,
         } as any);
-        console.log(
-          `   ✅ Status updated to "importing" in ${
-            Date.now() - updateStart2
-          }ms`
-        );
-
-        // Proceed to import within the same chunk
-        return await this.importChannelsBatch(
-          jobId,
-          channels,
-          job.userId,
-          job.name,
-          job.url,
-          startTime,
-          maxDuration
-        );
-      }
-
-      // Step 2: Parse only (legacy path; now also uses streaming)
-      if (job.status === "parsing") {
-        console.log(`   📝 PHASE 2: PARSE`);
-        console.log(`   Starting parse for job ${jobId}...`);
-
-        const updateStart = Date.now();
-        await this.updateJob(jobId, {
-          progress: 35,
-          message: "Parsing EPG file...",
-        });
-        console.log(`   ✅ Status updated in ${Date.now() - updateStart}ms`);
-
-        // Re-stream to parse
-        console.log(`   📥 Re-downloading EPG for parsing (stream)...`);
-        const downloadStart = Date.now();
-        const channels = await EPGService.importEPGStream(job.url);
-        const parseDuration = Date.now() - downloadStart;
-
-        console.log(
-          `   ✅ Parsed ${channels.length.toLocaleString()} channels in ${parseDuration}ms`
-        );
-
-        // Move to importing state
-        const updateStart2 = Date.now();
-        await this.updateJob(jobId, {
-          status: "importing",
-          progress: 60,
-          message: `Ready to import ${channels.length.toLocaleString()} channels...`,
-          totalChannels: channels.length,
-        });
-        console.log(
-          `   ✅ Status updated to "importing" in ${
-            Date.now() - updateStart2
-          }ms`
-        );
-
-        // Check if we have time to start importing
-        const elapsed = Date.now() - startTime;
-        console.log(
-          `   ⏱️ Elapsed time so far: ${elapsed}ms / ${maxDuration}ms`
-        );
-
-        if (elapsed > maxDuration - 3000) {
-          console.log(
-            `   ⚠️ Not enough time to start import (only ${
-              maxDuration - elapsed
-            }ms left)`
-          );
-          console.log(`   Will continue in next poll`);
-          console.log(
-            `<<< 🔄 processImportChunk END (continue in next poll) <<<\n`
-          );
+      } else if (job.status === "importing") {
+        console.log(`   📦 Resume import without re-downloading...`);
+        channels = await getChannels();
+        if (!channels || channels.length === 0) {
+          console.log(`   ⏳ Download still in progress; will continue next poll`);
           return false;
         }
-
-        // Start importing
-        console.log(`   ✅ Enough time remaining, starting import...`);
-        return await this.importChannelsBatch(
-          jobId,
-          channels,
-          job.userId,
-          job.name,
-          job.url,
-          startTime,
-          maxDuration
-        );
-      }
-
-      // Step 3: Import (needs to re-download+parse to get channels)
-      if (job.status === "importing") {
-        console.log(`   📦 PHASE 3: IMPORT (CONTINUE - streaming)`);
-        console.log(`   Continuing import for job ${jobId}...`);
-        console.log(
-          `   Currently imported: ${job.importedChannels} / ${job.totalChannels}`
-        );
-
-        // Re-download and parse to get channels (streaming)
-        console.log(`   📥 Re-downloading EPG for import (streaming)...`);
-        const downloadStart = Date.now();
-        let lastUpdate = Date.now();
-        const channels = await EPGService.importEPGStream(job.url, async (read, total) => {
-          const now = Date.now();
-          if (now - lastUpdate < 1000) return;
-          lastUpdate = now;
-          let progress = 5;
-          if (total && total > 0) {
-            progress = 5 + Math.min(35, Math.floor((read / total) * 35));
-          } else {
-            const readMB = read / (1024 * 1024);
-            progress = 5 + Math.min(35, Math.floor((readMB / 600) * 35));
-          }
+        if (!job.totalChannels) {
           await this.updateJob(jobId, {
-            progress,
-            downloadProgress: Math.min(progress, 40),
-            message: `Downloading EPG... ${((read / (1024 * 1024)) || 0).toFixed(1)}MB`,
-          } as any);
-        });
-        console.log(
-          `   ✅ Streamed and parsed ${channels.length.toLocaleString()} channels in ${
-            Date.now() - downloadStart
-          }ms`
-        );
-
-        // Update job to reflect download completion if not already
-        await this.updateJob(jobId, {
-          downloadProgress: 100,
-          message: `Parsed ${channels.length.toLocaleString()} channels. Importing...`,
-          totalChannels: channels.length,
-        } as any);
-
-        return await this.importChannelsBatch(
-          jobId,
-          channels,
-          job.userId,
-          job.name,
-          job.url,
-          startTime,
-          maxDuration
-        );
+            totalChannels: channels.length,
+          });
+        }
+      } else {
+        console.log(`   ⚠️ Job is in unexpected state: ${job.status}`);
+        console.log(`<<< 🔄 processImportChunk END (no action needed) <<<\n`);
+        return true;
       }
 
-      // Job is done or in an unexpected state
-      console.log(`   ⚠️ Job is in unexpected state: ${job.status}`);
-      console.log(`<<< 🔄 processImportChunk END (no action needed) <<<\n`);
-      return true;
+      // Import phase
+      return await this.importChannelsBatch(
+        jobId,
+        channels,
+        job.userId,
+        job.name,
+        job.url,
+        startTime,
+        maxDuration,
+        { xmlPath, channelsPath }
+      );
     } catch (error: any) {
       console.error(
         `\n❌❌❌ CRITICAL ERROR in processImportChunk (job ${jobId}) ❌❌❌`
@@ -406,7 +441,8 @@ export class EpgJobService {
     name: string,
     url: string,
     startTime: number,
-    maxDuration: number
+    maxDuration: number,
+    tempPaths?: { xmlPath: string; channelsPath: string }
   ): Promise<boolean> {
     console.log(`   >>> 📦 importChannelsBatch START <<<`);
     console.log(`   Job ID: ${jobId}`);
@@ -424,10 +460,21 @@ export class EpgJobService {
       }
     }
     const deduped = Array.from(unique.values());
+    const totalUniqueChannels = deduped.length;
     console.log(
       `   🧹 Deduplicated channels by tvgId/name: ${deduped.length.toLocaleString()} remaining (was ${channels.length.toLocaleString()})`
     );
     channels = deduped;
+
+    const cleanupTemp = async () => {
+      if (!tempPaths) return;
+      try {
+        await fs.promises.rm(tempPaths.channelsPath, { force: true });
+        await fs.promises.rm(tempPaths.xmlPath, { force: true });
+      } catch (e) {
+        // best-effort
+      }
+    };
 
     try {
       // Get the current job to check if we're continuing an existing import
@@ -625,7 +672,7 @@ export class EpgJobService {
       let imported = alreadyImported;
       let progressUpdateCounter = 0;
 
-      const totalPlanned = imported + channels.length; // alreadyImported + remaining inserts
+      const totalPlanned = totalUniqueChannels; // total unique channels seen in this file
 
       for (let i = startFromChannel; i < channels.length; i += BATCH_SIZE) {
         const batch = channels.slice(
@@ -754,13 +801,13 @@ export class EpgJobService {
       console.log(`[EPG Job ${jobId}] Database statistics updated`);
       
       // Mark as complete
-      // Update EPG file metadata (lastSyncedAt & channelCount)
+      // Update EPG file metadata (lastSyncedAt & channelCount = total unique, not just new)
       try {
         await prisma.epgFile.update({
           where: { id: epgFile.id },
           data: {
             lastSyncedAt: new Date(),
-            channelCount: imported,
+            channelCount: totalUniqueChannels,
           },
         });
       } catch (metaErr) {
@@ -775,11 +822,12 @@ export class EpgJobService {
         progress: 100,
         downloadProgress: 100,
         importProgress: 100,
-        message: `Successfully imported ${imported.toLocaleString()} channels`,
+        message: `Successfully imported ${imported.toLocaleString()} new / ${totalUniqueChannels.toLocaleString()} total channels`,
         importedChannels: imported,
       });
 
       console.log(`✅ Completed job ${jobId} - imported ${imported} channels`);
+      await cleanupTemp();
       return true;
     } catch (error: any) {
       console.error(`❌ Job ${jobId} failed:`, error);
@@ -788,6 +836,7 @@ export class EpgJobService {
         error: error.message || "Unknown error",
         message: `Failed: ${error.message || "Unknown error"}`,
       });
+      await cleanupTemp();
       return true; // Job finished (with error)
     }
   }

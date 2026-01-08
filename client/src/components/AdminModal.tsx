@@ -3195,106 +3195,48 @@ function AdminModal({ onClose, onPlaylistsReordered, user }: Props) {
               <h2>📥 Importing EPG: {importProgress.name}</h2>
             </div>
             <div className="modal-body" style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-              <div>
+              {(() => {
+                const status = importProgress.status;
+                const msg = importProgress.message?.trim();
+                const showMsg = msg && !msg.toLowerCase().startsWith("status:");
+                return (
+                  <>
+                    <div
+                      style={{
+                        fontSize: "0.95rem",
+                        color: "var(--text-secondary)",
+                        marginBottom: showMsg ? "0.25rem" : "0.5rem",
+                        fontWeight: 600,
+                      }}
+                    >
+                      Status: {status}
+                    </div>
+                    {showMsg && (
+                      <div
+                        style={{
+                          fontSize: "0.9rem",
+                          color: "var(--text-secondary)",
+                          marginBottom: "0.75rem",
+                        }}
+                      >
+                        {msg}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+
+              <div className="loader-container">
                 <div
-                  style={{
-                    fontSize: "0.9rem",
-                    color: "var(--text-secondary)",
-                    marginBottom: "0.5rem",
-                  }}
+                  className={`loader-bar ${
+                    importProgress.status === "failed" ? "loader-error" : ""
+                  }`}
                 >
-                  {importProgress.message}
+                  <div className="loader-pulse" />
                 </div>
-
-                {/* Download / Parse progress */}
-                <div style={{ marginBottom: "0.75rem" }}>
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      marginBottom: "0.25rem",
-                      color: "var(--text-secondary)",
-                      fontSize: "0.85rem",
-                    }}
-                  >
-                    <span>Download / Parse</span>
-                    <span>
-                      {Math.round(importProgress.downloadProgress ?? importProgress.progress)}%
-                    </span>
-                  </div>
-                  <div
-                    style={{
-                      width: "100%",
-                      height: "12px",
-                      backgroundColor: "var(--bg-secondary)",
-                      borderRadius: "6px",
-                      overflow: "hidden",
-                      position: "relative",
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: `${Math.round(importProgress.downloadProgress ?? importProgress.progress)}%`,
-                        height: "100%",
-                        backgroundColor:
-                          importProgress.status === "failed"
-                            ? "var(--danger)"
-                            : "var(--primary)",
-                        transition: "width 0.3s ease",
-                      }}
-                    />
-                  </div>
+                <div className="loader-hint">
+                  Working... this can take a few minutes. Do not close this window.
                 </div>
-
-                {/* Import progress */}
-                <div>
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      marginBottom: "0.25rem",
-                      color: "var(--text-secondary)",
-                      fontSize: "0.85rem",
-                    }}
-                  >
-                    <span>Import</span>
-                    <span>
-                      {Math.round(importProgress.importProgress ?? importProgress.progress)}%
-                    </span>
-                  </div>
-                  <div
-                    style={{
-                      width: "100%",
-                      height: "12px",
-                      backgroundColor: "var(--bg-secondary)",
-                      borderRadius: "6px",
-                      overflow: "hidden",
-                      position: "relative",
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: `${Math.round(importProgress.importProgress ?? importProgress.progress)}%`,
-                        height: "100%",
-                        backgroundColor:
-                          importProgress.status === "failed"
-                            ? "var(--danger)"
-                            : "var(--primary)",
-                        transition: "width 0.3s ease",
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-              <div
-                style={{
-                  fontSize: "0.85rem",
-                  color: "var(--text-muted)",
-                  textAlign: "center",
-                }}
-              >
-                This may take a few minutes for large EPG files. Please don't
-                close this window.
               </div>
             </div>
           </div>

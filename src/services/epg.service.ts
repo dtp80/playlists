@@ -3,6 +3,10 @@ import { XMLParser, XMLBuilder } from "fast-xml-parser";
 import { gunzipSync, createGunzip } from "zlib";
 import { SaxesParser } from "saxes";
 import { Readable } from "stream";
+import fs from "fs";
+import os from "os";
+import path from "path";
+import { createWriteStream, createReadStream } from "fs";
 
 interface EPGChannel {
   "@_id"?: string;
@@ -145,7 +149,233 @@ export class EPGService {
     url: string,
     onProgress?: (bytesRead: number, totalBytes?: number) => void
   ): Promise<ParsedChannel[]> {
-    // Fallback: download entire file (safe for small files like 7–20MB) and parse
+    // Helper: parse an XMLTV readable stream without buffering the whole file
+    const parseXmlStream = async (
+      input: Readable,
+      totalBytes?: number,
+      isGzipped?: boolean,
+      progressCb?: (bytesRead: number, totalBytes?: number) => void
+    ): Promise<ParsedChannel[]> => {
+      const channels: ParsedChannel[] = [];
+      let currentId: string | null = null;
+      let currentName: string | null = null;
+      let currentLogo: string | null = null;
+      let inDisplayName = false;
+      let gunzipActive = isGzipped || false;
+      let gunzip: ReturnType<typeof createGunzip> | null = null;
+      let bytesRead = 0;
+      let firstChunkChecked = false;
+      const parser = new SaxesParser({ xmlns: false });
+
+      parser.on("opentag", (tag: any) => {
+        if (tag.name === "channel") {
+          currentId = (tag.attributes["id"] as string) || null;
+          currentName = null;
+          currentLogo = null;
+          inDisplayName = false;
+        } else if (tag.name === "display-name") {
+          inDisplayName = true;
+          currentName = "";
+        } else if (tag.name === "icon" && currentId) {
+          const src = (tag.attributes["src"] as string) || "";
+          if (src) currentLogo = src;
+        }
+      });
+
+      parser.on("text", (text: string) => {
+        if (inDisplayName && currentName !== null) {
+          currentName += text;
+        }
+      });
+
+      parser.on("closetag", (tag: any) => {
+        const name = typeof tag === "string" ? tag : tag?.name;
+        if (name === "display-name") {
+          inDisplayName = false;
+        } else if (name === "channel") {
+          if (currentId && currentName) {
+            channels.push({
+              tvgId: currentId.trim(),
+              name: currentName.trim(),
+              tvgLogo: currentLogo?.trim(),
+            });
+          }
+          currentId = null;
+          currentName = null;
+          currentLogo = null;
+          inDisplayName = false;
+        }
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        let resolved = false;
+        let idleTimer: NodeJS.Timeout | null = null;
+        const idleTimeoutMs = 15000;
+
+        const resetIdleTimer = () => {
+          if (idleTimer) clearTimeout(idleTimer);
+          idleTimer = setTimeout(() => {
+            fail(new Error(`Download stalled: no data received for ${idleTimeoutMs / 1000}s`));
+          }, idleTimeoutMs);
+        };
+
+        const finish = () => {
+          if (resolved) return;
+          resolved = true;
+          if (idleTimer) clearTimeout(idleTimer);
+          resolve();
+        };
+
+        const fail = (err: any) => {
+          if (resolved) return;
+          resolved = true;
+          if (idleTimer) clearTimeout(idleTimer);
+          reject(err);
+        };
+
+        const feedParser = (textChunk: string) => {
+          bytesRead += Buffer.byteLength(textChunk);
+          if (progressCb) progressCb(bytesRead, totalBytes);
+
+          if (!firstChunkChecked) {
+            firstChunkChecked = true;
+            const trimmed = textChunk.replace(/^\uFEFF/, "").trimStart();
+            if (!trimmed.startsWith("<")) {
+              const preview = trimmed.slice(0, 200);
+              return fail(
+                new Error(
+                  `Invalid EPG XML: unexpected first character (not '<'). Preview: ${preview}`
+                )
+              );
+            }
+          }
+
+          parser.write(textChunk);
+        };
+
+        const wireStream = (readable: Readable) => {
+          readable.on("data", (chunk: Buffer) => {
+            try {
+              resetIdleTimer();
+              if (!gunzipActive && this.isGzipData(chunk)) {
+                gunzipActive = true;
+                gunzip = createGunzip();
+                gunzip.on("data", (buf: Buffer) => feedParser(buf.toString("utf-8")));
+                gunzip.on("end", () => {
+                  try {
+                    parser.close();
+                    finish();
+                  } catch (err) {
+                    fail(err);
+                  }
+                });
+                gunzip.on("error", fail);
+                gunzip.write(chunk);
+                return;
+              }
+              feedParser(chunk.toString("utf-8"));
+            } catch (err) {
+              fail(err);
+            }
+          });
+
+          resetIdleTimer();
+
+          readable.on("end", () => {
+            try {
+              if (gunzipActive) {
+                if (gunzip) {
+                  gunzip.end();
+                  return;
+                }
+              }
+              parser.close();
+              finish();
+            } catch (err) {
+              fail(err);
+            }
+          });
+
+          readable.on("error", fail);
+          parser.on("error", (err: any) => fail(err));
+        };
+
+        if (gunzipActive) {
+          const unzip = createGunzip();
+          unzip.on("data", (buf: Buffer) => feedParser(buf.toString("utf-8")));
+          unzip.on("end", () => {
+            try {
+              parser.close();
+              finish();
+            } catch (err) {
+              fail(err);
+            }
+          });
+          unzip.on("error", fail);
+          resetIdleTimer();
+          input.pipe(unzip);
+        } else {
+          wireStream(input);
+        }
+      });
+
+      return channels;
+    };
+
+    // Helper: download to a temp file and parse from disk (avoids huge buffers)
+    const downloadAndParseViaTempFile = async (): Promise<ParsedChannel[]> => {
+      const response = await axios.get(url, {
+        responseType: "stream",
+        timeout: 300000,
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+        maxRedirects: 5,
+        headers: {
+          "User-Agent": "IPTV-Playlist-Manager/1.0",
+          "Accept-Encoding": "gzip, deflate",
+          Accept: "application/xml, text/xml, application/octet-stream, */*",
+        },
+      });
+
+      const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "epg-"));
+      const tempFile = path.join(tempDir, "epg_download");
+      const writeStream = createWriteStream(tempFile);
+
+      const totalBytesHeader = response.headers["content-length"];
+      const totalBytes = totalBytesHeader ? parseInt(totalBytesHeader, 10) : undefined;
+      let isGzipped =
+        url.endsWith(".gz") ||
+        url.endsWith(".xml.gz") ||
+        response.headers["content-type"]?.includes("gzip") ||
+        response.headers["content-encoding"]?.includes("gzip");
+
+      let bytes = 0;
+      await new Promise<void>((resolve, reject) => {
+        response.data.on("data", (chunk: Buffer) => {
+          bytes += chunk.length;
+          if (!isGzipped && this.isGzipData(chunk)) {
+            isGzipped = true;
+          }
+          if (onProgress) onProgress(bytes, totalBytes);
+        });
+        response.data.on("error", reject);
+        writeStream.on("error", reject);
+        writeStream.on("finish", resolve);
+        response.data.pipe(writeStream);
+      });
+
+      try {
+        const fileStream = createReadStream(tempFile);
+        const parsed = await parseXmlStream(fileStream, totalBytes, isGzipped, onProgress);
+        await fs.promises.rm(tempDir, { recursive: true, force: true });
+        return parsed;
+      } catch (err) {
+        await fs.promises.rm(tempDir, { recursive: true, force: true });
+        throw err;
+      }
+    };
+
+    // Fallback: download entire small file into buffer (safe for <=50MB) and parse
     const downloadAndParseBuffer = async (): Promise<ParsedChannel[]> => {
       const bufResp = await axios.get<ArrayBufferLike>(url, {
         responseType: "arraybuffer",
@@ -159,7 +389,6 @@ export class EPGService {
       });
       const buf = Buffer.from(bufResp.data);
       let xmlBuf = buf;
-      // Auto-gunzip if needed
       if (this.isGzipData(buf)) {
         xmlBuf = await new Promise<Buffer>((resolve, reject) => {
           const unzip = createGunzip();
@@ -188,15 +417,56 @@ export class EPGService {
       const lenHeader = headResp.headers["content-length"];
       const len = lenHeader ? parseInt(lenHeader, 10) : undefined;
       if (len && len > 0 && len <= 50 * 1024 * 1024) {
-        // Small file: download and parse in one go
         return await downloadAndParseBuffer();
       }
     } catch {
       // If HEAD fails, continue to streaming
     }
 
-    const channels: ParsedChannel[] = [];
+    // Stream and parse; if it fails, fallback to temp-file streaming (no buffering to string)
+    try {
+      const response = await axios.get(url, {
+        responseType: "stream",
+        timeout: 300000,
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+        maxRedirects: 5,
+        headers: {
+          "User-Agent": "IPTV-Playlist-Manager/1.0",
+          "Accept-Encoding": "gzip, deflate",
+          Accept: "application/xml, text/xml, application/octet-stream, */*",
+        },
+      });
 
+      const isGzipped =
+        url.endsWith(".gz") ||
+        url.endsWith(".xml.gz") ||
+        response.headers["content-type"]?.includes("gzip") ||
+        response.headers["content-encoding"]?.includes("gzip");
+
+      const totalBytesHeader = response.headers["content-length"];
+      const totalBytes = totalBytesHeader ? parseInt(totalBytesHeader, 10) : undefined;
+      const source: Readable = response.data as Readable;
+
+      const parsed = await parseXmlStream(source, totalBytes, isGzipped, onProgress);
+      console.log(`✅ Parsed ${parsed.length} channels via streaming`);
+      return parsed;
+    } catch (streamErr) {
+      console.warn("Stream parsing failed, retrying via temp file (no buffering):", streamErr);
+      const parsed = await downloadAndParseViaTempFile();
+      console.log(`✅ Parsed ${parsed.length} channels via temp file`);
+      return parsed;
+    }
+  }
+
+  /**
+   * Download an EPG file to a deterministic temp path (no buffering).
+   */
+  static async downloadToTempFile(
+    url: string,
+    targetPath: string,
+    onProgress?: (bytesRead: number, totalBytes?: number) => void
+  ): Promise<{ filePath: string; isGzipped: boolean; totalBytes?: number }> {
     const response = await axios.get(url, {
       responseType: "stream",
       timeout: 300000,
@@ -205,26 +475,62 @@ export class EPGService {
       maxRedirects: 5,
       headers: {
         "User-Agent": "IPTV-Playlist-Manager/1.0",
-        // keep gzip/deflate only; br can stall on some CDNs when streaming
         "Accept-Encoding": "gzip, deflate",
-        "Accept": "application/xml, text/xml, application/octet-stream, */*",
+        Accept: "application/xml, text/xml, application/octet-stream, */*",
       },
     });
 
-    const isGzipped =
+    await fs.promises.mkdir(path.dirname(targetPath), { recursive: true });
+    const writeStream = createWriteStream(targetPath);
+
+    const totalBytesHeader = response.headers["content-length"];
+    const totalBytes = totalBytesHeader ? parseInt(totalBytesHeader, 10) : undefined;
+    let isGzipped =
       url.endsWith(".gz") ||
       url.endsWith(".xml.gz") ||
       response.headers["content-type"]?.includes("gzip") ||
       response.headers["content-encoding"]?.includes("gzip");
 
-    const source: Readable = response.data as Readable;
-    const stream = isGzipped ? source.pipe(createGunzip()) : source;
+    let bytes = 0;
+    await new Promise<void>((resolve, reject) => {
+      response.data.on("data", (chunk: Buffer) => {
+        bytes += chunk.length;
+        if (!isGzipped && EPGService.isGzipData(chunk)) {
+          isGzipped = true;
+        }
+        if (onProgress) onProgress(bytes, totalBytes);
+      });
+      response.data.on("error", reject);
+      writeStream.on("error", reject);
+      writeStream.on("finish", resolve);
+      response.data.pipe(writeStream);
+    });
 
+    return { filePath: targetPath, isGzipped, totalBytes };
+  }
+
+  /**
+   * Parse an EPG file already on disk (auto-detect gzip).
+   */
+  static async parseEPGFromFile(
+    filePath: string,
+    onProgress?: (bytesRead: number, totalBytes?: number) => void
+  ): Promise<ParsedChannel[]> {
+    const stat = await fs.promises.stat(filePath);
+    const totalBytes = stat.size;
+    const firstBytes = Buffer.alloc(2);
+    const fd = await fs.promises.open(filePath, "r");
+    await fd.read(firstBytes, 0, 2, 0);
+    await fd.close();
+    const isGzipped = this.isGzipData(firstBytes);
+
+    const channels: ParsedChannel[] = [];
     let currentId: string | null = null;
     let currentName: string | null = null;
     let currentLogo: string | null = null;
     let inDisplayName = false;
-
+    let bytesRead = 0;
+    let firstChunkChecked = false;
     const parser = new SaxesParser({ xmlns: false });
 
     parser.on("opentag", (tag: any) => {
@@ -267,38 +573,17 @@ export class EPGService {
       }
     });
 
-    try {
       await new Promise<void>((resolve, reject) => {
-      const totalBytesHeader = response.headers["content-length"];
-      const totalBytes = totalBytesHeader ? parseInt(totalBytesHeader, 10) : undefined;
-      let bytesRead = 0;
-      let firstChunkChecked = false;
-      const contentType = response.headers["content-type"] || "";
-      let gunzipActive = isGzipped;
-      let gunzip: ReturnType<typeof createGunzip> | null = null;
       let resolved = false;
-      let idleTimer: NodeJS.Timeout | null = null;
-      const idleTimeoutMs = 15000; // 15s stall detection (small files should finish quickly)
-
-      const resetIdleTimer = () => {
-        if (idleTimer) clearTimeout(idleTimer);
-        idleTimer = setTimeout(() => {
-          fail(new Error(`Download stalled: no data received for ${idleTimeoutMs / 1000}s`));
-        }, idleTimeoutMs);
-      };
-
-      const finish = () => {
-        if (resolved) return;
-        resolved = true;
-        if (idleTimer) clearTimeout(idleTimer);
-        resolve();
-      };
-
       const fail = (err: any) => {
         if (resolved) return;
         resolved = true;
-        if (idleTimer) clearTimeout(idleTimer);
         reject(err);
+      };
+      const finish = () => {
+        if (resolved) return;
+        resolved = true;
+        resolve();
       };
 
       const feedParser = (textChunk: string) => {
@@ -308,12 +593,11 @@ export class EPGService {
         if (!firstChunkChecked) {
           firstChunkChecked = true;
           const trimmed = textChunk.replace(/^\uFEFF/, "").trimStart();
-
           if (!trimmed.startsWith("<")) {
             const preview = trimmed.slice(0, 200);
             return fail(
               new Error(
-                `Invalid EPG XML: unexpected first character (not '<'). The URL may not point to an XMLTV file (received ${contentType || "non-XML"}). Preview: ${preview}`
+                `Invalid EPG XML: unexpected first character (not '<'). Preview: ${preview}`
               )
             );
           }
@@ -322,12 +606,10 @@ export class EPGService {
         parser.write(textChunk);
       };
 
-      stream.on("data", (chunk: Buffer) => {
-        try {
-          resetIdleTimer();
-          // Auto-detect gzip when headers/URL didn't indicate it
-          if (!gunzipActive && this.isGzipData(chunk)) {
-            gunzipActive = true;
+      const fileStream = createReadStream(filePath);
+      let gunzip: ReturnType<typeof createGunzip> | null = null;
+
+      if (isGzipped) {
             gunzip = createGunzip();
             gunzip.on("data", (buf: Buffer) => feedParser(buf.toString("utf-8")));
             gunzip.on("end", () => {
@@ -339,41 +621,28 @@ export class EPGService {
               }
             });
             gunzip.on("error", fail);
-            gunzip.write(chunk);
-            return;
+        fileStream.pipe(gunzip);
+      } else {
+        fileStream.on("data", (chunk: Buffer | string) => {
+          try {
+            const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            feedParser(buf.toString("utf-8"));
+          } catch (err) {
+            fail(err);
           }
-
-          // Normal path (already gunzipped or plain XML)
-          feedParser(chunk.toString("utf-8"));
-        } catch (err) {
-          fail(err);
-        }
-      });
-
-      resetIdleTimer();
-
-      stream.on("end", () => {
+        });
+        fileStream.on("end", () => {
         try {
-          if (gunzipActive) {
-            // gunzip 'end' will resolve
-            return;
-          }
           parser.close();
           finish();
         } catch (err) {
           fail(err);
         }
       });
-
-      stream.on("error", fail);
-      parser.on("error", (err: any) => fail(err));
+        fileStream.on("error", fail);
+      }
       });
-    } catch (streamErr) {
-      console.warn("Stream parsing failed, retrying with buffered download:", streamErr);
-      return await downloadAndParseBuffer();
-    }
 
-    console.log(`✅ Parsed ${channels.length} channels via streaming`);
     return channels;
   }
 
