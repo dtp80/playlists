@@ -1,13 +1,6 @@
 # IPTV Playlist Manager (Local Edition)
 
-A local-only IPTV playlist manager for desktop use (Mac/Windows/Linux). Runs entirely on your machine with a local SQLite database—no Vercel, no Aiven, no external authentication. A single built-in admin user is injected automatically.
-
-## What Changed vs Previous Cloud Setup
-
-- 🔌 **No Vercel / serverless**: Standard Express server runs locally.
-- 🗄️ **Local DB**: SQLite file (`dev.db`) instead of Aiven/PostgreSQL.
-- 🔐 **No auth/2FA**: App always runs as a single local admin user.
-- 🧭 **No session store dependency**: In-memory session with default admin injected per request.
+A local-only IPTV playlist manager for desktop use (Mac/Windows/Linux). Runs entirely on your machine with a local SQLite database. A single built-in admin user is injected automatically.
 
 ## Tech Stack
 
@@ -17,10 +10,10 @@ A local-only IPTV playlist manager for desktop use (Mac/Windows/Linux). Runs ent
 
 ## Prerequisites
 
-- Node.js 18+ and npm: https://nodejs.org/en/download
+- Node.js 20+ and npm: https://nodejs.org/en/download
 - Git: https://git-scm.com/install
 
-## Quick Start (Mac/Windows/Linux)
+## Quick Start (Mac/Windows/Linux) wfrom a terminal session
 
 1. **Clone & enter the project**
 
@@ -53,16 +46,21 @@ A local-only IPTV playlist manager for desktop use (Mac/Windows/Linux). Runs ent
    npx prisma db push   # creates dev.db with the schema
    ```
 
-5. **Build for production (optional)**
+5. **Build for production**
 
    ```bash
-   npm run build    # builds server + client
-   npm start        # serves built assets via Express
+   npm run build
+   ```
+
+6. **Run the app server and launch it in browser**
+
+   ```bash
+   npm start
    ```
 
    - Run the app in your browser: http://localhost:3000
 
-6. Telegram Setup (optional, for sync summaries)
+7. Telegram Setup (optional, for sync summaries)
 
 You can receive sync summaries via Telegram (manual and scheduled syncs).
 
@@ -106,7 +104,6 @@ You can receive sync summaries via Telegram (manual and scheduled syncs).
 ## Current Scope
 
 - Playlist sync/import, channel filtering, EPG import, and JSON mapping all run locally.
-- Authentication, multi-user, and 2FA are disabled.
 
 ## Troubleshooting
 
