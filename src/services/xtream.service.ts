@@ -381,6 +381,7 @@ export class XtreamService {
     categoryFilters?: string[]
   ): Promise<{
     categories: Category[];
+    allCategories: Category[];
     channels: Channel[];
   }> {
     const syncStart = Date.now();
@@ -391,7 +392,12 @@ export class XtreamService {
     // Get categories
     const xtreamCategories = await this.getCategories(credentials);
 
-    // If filters provided, keep only those categories
+    // All categories (for persistence and UI)
+    const allCategories = xtreamCategories.map((cat) =>
+      this.convertCategory(cat, playlistId)
+    );
+
+    // If filters provided, keep only those categories for channel fetch
     const filteredCategories =
       categoryFilters && categoryFilters.length > 0
         ? xtreamCategories.filter((c) =>
@@ -476,6 +482,6 @@ export class XtreamService {
       );
     }
 
-    return { categories, channels };
+    return { categories, allCategories, channels };
   }
 }

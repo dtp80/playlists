@@ -1107,3 +1107,49 @@
   color: var(--text-secondary);
   line-height: 1.4;
 }
+
+/* Schedule */
+.schedule-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.schedule-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--border-color, #2a2a2a);
+  border-radius: 8px;
+  background: var(--bg-secondary, #161616);
+}
+
+.schedule-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.schedule-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.95rem;
+}
+
+.schedule-row input[type="time"] {
+  background: var(--bg-primary, #0f0f0f);
+  color: var(--text-primary, #fff);
+  border: 1px solid var(--border-color, #2a2a2a);
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+.schedule-actions {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+}

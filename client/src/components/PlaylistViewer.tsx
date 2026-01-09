@@ -757,7 +757,15 @@ function PlaylistViewer({ playlist, onSync, onEditPlaylist }: Props) {
 
     try {
       setLoading(true);
-      await api.syncCategories(playlist.id!);
+      const result = await api.syncCategories(playlist.id!);
+
+      setCategorySyncSummary({
+        total: result.categoriesCount ?? 0,
+        added: result.added || [],
+        removed: result.removed || [],
+        isFirstSync: !!result.isFirstSync,
+      });
+
       // Refresh categories and playlist metadata (timestamps)
       await loadData();
       const updatedPlaylist = await api.getPlaylist(playlist.id!);
@@ -934,6 +942,13 @@ function PlaylistViewer({ playlist, onSync, onEditPlaylist }: Props) {
     notFound: number;
     channelsInJsonNotInPlaylist: Array<{ channelName: string; channelId: any }>;
     channelsInPlaylistNotInJson: Array<{ channelName: string; channelId: any }>;
+  } | null>(null);
+
+  const [categorySyncSummary, setCategorySyncSummary] = useState<{
+    total: number;
+    added: string[];
+    removed: string[];
+    isFirstSync: boolean;
   } | null>(null);
 
   const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -1766,6 +1781,85 @@ function PlaylistViewer({ playlist, onSync, onEditPlaylist }: Props) {
             loadChannels(currentPage);
           }}
         />
+      )}
+
+      {categorySyncSummary && (
+        <div className="modal-overlay" onClick={() => setCategorySyncSummary(null)}>
+          <div
+            className="modal"
+            style={{ maxWidth: "520px" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <h2>📂 Category Sync Summary</h2>
+            </div>
+            <div
+              className="modal-body"
+              style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}
+            >
+              <div>
+                <strong>Total categories:</strong> {categorySyncSummary.total}
+              </div>
+              {categorySyncSummary.isFirstSync ? (
+                <div>First sync for this playlist: all categories are new.</div>
+              ) : (
+                <>
+                  <div>
+                    <strong>Added:</strong>
+                    {categorySyncSummary.added.length > 0 ? (
+                      <div
+                        style={{
+                          maxHeight: "160px",
+                          overflowY: "auto",
+                          padding: "8px",
+                          border: "1px solid var(--border-color, #333)",
+                          borderRadius: "6px",
+                          marginTop: "6px",
+                        }}
+                      >
+                        <ul style={{ margin: 0, paddingLeft: "16px" }}>
+                          {categorySyncSummary.added.map((c) => (
+                            <li key={`added-${c}`}>{c}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : (
+                      " None"
+                    )}
+                  </div>
+                  <div>
+                    <strong>Removed:</strong>
+                    {categorySyncSummary.removed.length > 0 ? (
+                      <div
+                        style={{
+                          maxHeight: "160px",
+                          overflowY: "auto",
+                          padding: "8px",
+                          border: "1px solid var(--border-color, #333)",
+                          borderRadius: "6px",
+                          marginTop: "6px",
+                        }}
+                      >
+                        <ul style={{ margin: 0, paddingLeft: "16px" }}>
+                          {categorySyncSummary.removed.map((c) => (
+                            <li key={`removed-${c}`}>{c}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : (
+                      " None"
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-primary" onClick={() => setCategorySyncSummary(null)}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {importResults && (

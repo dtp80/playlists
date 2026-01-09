@@ -372,6 +372,10 @@ router.post("/:id/sync-categories", async (req: Request, res: Response) => {
         .json({ error: "Category-only sync is only available for Xtream" });
     }
 
+    // Capture existing categories to compute deltas and preserve selection
+    const existingCategories = await PlaylistRepository.getCategories(id);
+    const existingIds = new Set(existingCategories.map((c) => c.categoryId));
+
     // Fetch categories from provider
     const xtreamCreds = {
       url: playlist.url,
@@ -392,10 +396,24 @@ router.post("/:id/sync-categories", async (req: Request, res: Response) => {
       data: { lastCategoriesSyncedAt: new Date() },
     });
 
+    // Compute deltas
+    const newIds = new Set(categories.map((c) => c.categoryId));
+    const added = categories
+      .filter((c) => !existingIds.has(c.categoryId))
+      .map((c) => c.categoryName);
+    const removed = existingCategories
+      .filter((c) => !newIds.has(c.categoryId))
+      .map((c) => c.categoryName);
+
+    const isFirstSync = existingCategories.length === 0;
+
     res.json({
       success: true,
       categoriesCount: categories.length,
       lastCategoriesSyncedAt: new Date(),
+      added,
+      removed,
+      isFirstSync,
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message });

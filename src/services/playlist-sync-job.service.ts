@@ -148,9 +148,14 @@ export class PlaylistSyncJobService {
           },
         });
 
-        // Save categories (fast)
+        // Save categories (fast). If filters are used, preserve existing categories so others are not removed.
         console.log(`[Sync Job ${jobId}] Saving categories...`);
-        await PlaylistRepository.saveCategories(job.playlistId, categories);
+        const preserveExisting = !!job.categoryFilters;
+        await PlaylistRepository.saveCategories(
+          job.playlistId,
+          categories,
+          preserveExisting
+        );
 
         // Start saving channels in batches
         return await this.saveChannelsBatch(

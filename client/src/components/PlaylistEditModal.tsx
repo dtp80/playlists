@@ -634,6 +634,7 @@ function PlaylistEditModal({ playlist, onClose, onSave }: Props) {
                       ✗ Unselect All
                     </button>
                     <span className="category-count">
+                      {syncSelection.size} selected ·{" "}
                       {categories.length - hiddenCategories.size} of{" "}
                       {categories.length} visible
                       {categorySearch && (

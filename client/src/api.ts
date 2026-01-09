@@ -487,6 +487,26 @@ export const api = {
     return response.data;
   },
 
+  // Schedule
+  getSchedule: async (): Promise<
+    Array<{ playlistId: number; enabled: boolean; time: string }>
+  > => {
+    const response = await axios.get(`${API_BASE}/schedule`, {
+      withCredentials: true,
+    });
+    return response.data.schedule || [];
+  },
+
+  saveSchedule: async (
+    schedule: Array<{ playlistId: number; enabled: boolean; time: string }>
+  ): Promise<void> => {
+    await axios.post(
+      `${API_BASE}/schedule`,
+      { schedule },
+      { withCredentials: true }
+    );
+  },
+
   setCategorySelection: async (
     playlistId: number,
     categoryIds: string[]

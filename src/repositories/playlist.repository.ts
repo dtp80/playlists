@@ -126,35 +126,61 @@ export class PlaylistRepository {
    */
   static async saveCategories(
     playlistId: number,
-    categories: Category[]
+    categories: Category[],
+    preserveExisting: boolean = false
   ): Promise<void> {
     const timeout = await getSyncTimeout();
 
     // Preserve previous selection state
     const existing = await prisma.category.findMany({
       where: { playlistId },
-      select: { categoryId: true, isSelected: true },
+      select: { categoryId: true, isSelected: true, categoryName: true, parentId: true },
     });
     const selectionMap = new Map(
       existing.map((c) => [c.categoryId, c.isSelected || 0])
     );
 
+    // Build final category set
+    const categoryMap = new Map<string, Category & { isSelected?: number }>();
+
+    if (preserveExisting) {
+      existing.forEach((cat) => {
+        categoryMap.set(cat.categoryId, {
+          playlistId,
+          categoryId: cat.categoryId,
+          categoryName: cat.categoryName,
+          parentId: cat.parentId || null,
+          isSelected: cat.isSelected || 0,
+        } as any);
+      });
+    }
+
+    categories.forEach((cat) => {
+      categoryMap.set(cat.categoryId, {
+        playlistId: cat.playlistId,
+        categoryId: cat.categoryId,
+        categoryName: cat.categoryName,
+        parentId: cat.parentId || null,
+        isSelected: selectionMap.get(cat.categoryId) ?? 0,
+      } as any);
+    });
+
+    const finalCategories = Array.from(categoryMap.values());
+
     await prisma.$transaction(
       async (tx) => {
-        // Delete existing categories
         await tx.category.deleteMany({
           where: { playlistId },
         });
 
-        // Insert new categories
-        if (categories.length > 0) {
+        if (finalCategories.length > 0) {
           await tx.category.createMany({
-            data: categories.map((cat) => ({
+            data: finalCategories.map((cat) => ({
               playlistId: cat.playlistId,
               categoryId: cat.categoryId,
               categoryName: cat.categoryName,
               parentId: cat.parentId || null,
-              isSelected: selectionMap.get(cat.categoryId) ?? 0, // new categories default to unselected
+              isSelected: cat.isSelected ?? 0,
             })),
           });
         }

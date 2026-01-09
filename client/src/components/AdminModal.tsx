@@ -10,7 +10,13 @@ interface Props {
   user: User;
 }
 
-type TabType = "general" | "playlists" | "channels" | "epg" | "users";
+type TabType =
+  | "general"
+  | "playlists"
+  | "channels"
+  | "epg"
+  | "users"
+  | "schedule";
 
 interface LineupChannel {
   id: number;
@@ -48,6 +54,10 @@ function AdminModal({ onClose, onPlaylistsReordered, user }: Props) {
   const [draggedPlaylist, setDraggedPlaylist] = useState<Playlist | null>(null);
   const [dragOverPlaylist, setDragOverPlaylist] = useState<number | null>(null);
   const [users, setUsers] = useState<User[]>([]);
+  const [schedule, setSchedule] = useState<
+    Array<{ playlistId: number; enabled: boolean; time: string }>
+  >([]);
+  const [savingSchedule, setSavingSchedule] = useState(false);
   const [loading, setLoading] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   const [showAddUserForm, setShowAddUserForm] = useState(false);
@@ -177,11 +187,8 @@ function AdminModal({ onClose, onPlaylistsReordered, user }: Props) {
       loadPlaylists();
     } else if (activeTab === "epg") {
       loadEpgFiles();
-    } else if (activeTab === "users" && isAdmin) {
-      console.log("[useEffect] Loading users...");
-      loadUsers();
-    } else if (activeTab === "users" && !isAdmin) {
-      console.log("[useEffect] Users tab selected but user is NOT admin");
+    } else if (activeTab === "schedule") {
+      loadSchedule();
     }
   }, [activeTab]);
 
@@ -193,6 +200,61 @@ function AdminModal({ onClose, onPlaylistsReordered, user }: Props) {
       setSyncTimeout(settings.syncTimeout || 60);
     } catch (err: any) {
       console.error("Failed to load settings:", err);
+    }
+  };
+
+  const loadSchedule = async () => {
+    try {
+      const saved = await api.getSchedule();
+      // Ensure playlists are loaded to merge with schedule
+      let currentPlaylists = playlists;
+      if (playlists.length === 0) {
+        currentPlaylists = await loadPlaylists();
+      }
+      // Merge with playlists so every playlist has a row
+      const merged = currentPlaylists.map((p) => {
+        const found = saved.find((s) => s.playlistId === p.id);
+        return (
+          found || {
+            playlistId: p.id!,
+            enabled: false,
+            time: "02:00",
+          }
+        );
+      });
+      setSchedule(merged);
+    } catch (err) {
+      console.error("Failed to load schedule:", err);
+    }
+  };
+
+  const updateScheduleItem = (
+    playlistId: number,
+    patch: Partial<{ enabled: boolean; time: string }>
+  ) => {
+    setSchedule((prev) => {
+      const existing = prev.find((s) => s.playlistId === playlistId);
+      if (existing) {
+        return prev.map((s) =>
+          s.playlistId === playlistId ? { ...s, ...patch } : s
+        );
+      }
+      return [...prev, { playlistId, enabled: false, time: "02:00", ...patch }];
+    });
+  };
+
+  const handleSaveSchedule = async () => {
+    try {
+      setSavingSchedule(true);
+      await api.saveSchedule(schedule);
+    } catch (err) {
+      setConfirmModal({
+        title: "Error",
+        message: "Failed to save schedule: " + (err as any).message,
+        confirmVariant: "danger",
+      });
+    } finally {
+      setSavingSchedule(false);
     }
   };
 
@@ -1137,12 +1199,14 @@ function AdminModal({ onClose, onPlaylistsReordered, user }: Props) {
       setLoading(true);
       const playlistsData = await api.getPlaylists();
       setPlaylists(playlistsData);
+      return playlistsData;
     } catch (error: any) {
       setConfirmModal({
         title: "Error",
         message: "Failed to load playlists: " + error.message,
         confirmVariant: "danger",
       });
+      return [];
     } finally {
       setLoading(false);
     }
@@ -1689,14 +1753,12 @@ function AdminModal({ onClose, onPlaylistsReordered, user }: Props) {
           >
             EPG
           </button>
-          {isAdmin && (
-            <button
-              className={`tab-btn ${activeTab === "users" ? "active" : ""}`}
-              onClick={() => setActiveTab("users")}
-            >
-              Users
-            </button>
-          )}
+          <button
+            className={`tab-btn ${activeTab === "schedule" ? "active" : ""}`}
+            onClick={() => setActiveTab("schedule")}
+          >
+            Schedule
+          </button>
         </div>
 
         <div className="modal-body">
@@ -2827,6 +2889,61 @@ function AdminModal({ onClose, onPlaylistsReordered, user }: Props) {
                   )}
                 </>
               )}
+            </div>
+          )}
+
+          {activeTab === "schedule" && (
+            <div className="tab-content">
+              <div className="settings-section">
+                <h3>Schedule Playlist Sync</h3>
+                <p className="setting-description">
+                  Enable daily auto-sync per playlist. Jobs run sequentially (lowest
+                  playlist ID first) and will skip UI popups while running on a
+                  schedule.
+                </p>
+                <div className="schedule-list">
+                  {schedule.map((item) => {
+                    const pl = playlists.find((p) => p.id === item.playlistId);
+                    return (
+                      <div key={item.playlistId} className="schedule-row">
+                        <div className="schedule-name">
+                          {pl?.name || `Playlist ${item.playlistId}`}
+                        </div>
+                        <label className="schedule-toggle">
+                          <input
+                            type="checkbox"
+                            checked={item.enabled}
+                            onChange={(e) =>
+                              updateScheduleItem(item.playlistId, {
+                                enabled: e.target.checked,
+                              })
+                            }
+                          />
+                          <span>Enable</span>
+                        </label>
+                        <input
+                          type="time"
+                          value={item.time || "02:00"}
+                          onChange={(e) =>
+                            updateScheduleItem(item.playlistId, {
+                              time: e.target.value,
+                            })
+                          }
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="schedule-actions">
+                  <button
+                    className="btn btn-primary"
+                    onClick={handleSaveSchedule}
+                    disabled={savingSchedule}
+                  >
+                    {savingSchedule ? "Saving..." : "Save Schedule"}
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
