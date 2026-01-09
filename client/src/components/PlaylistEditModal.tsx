@@ -38,6 +38,7 @@ function PlaylistEditModal({ playlist, onClose, onSave }: Props) {
   const [epgGroups, setEpgGroups] = useState<EpgGroup[]>([]);
   const [loadingEpg, setLoadingEpg] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [categoriesLoaded, setCategoriesLoaded] = useState(false);
   const [hiddenCategories] = useState<Set<string>>(
     new Set(playlist.hiddenCategories || [])
   );
@@ -67,11 +68,15 @@ function PlaylistEditModal({ playlist, onClose, onSave }: Props) {
   useEffect(() => {
     // Load EPG files when modal opens
     loadEpgFiles();
+    // Preload categories so selection persists even if Categories tab is never opened
+    loadCategories({ silent: true });
   }, []);
 
   useEffect(() => {
     if (activeTab === "categories") {
-      loadCategories();
+      if (!categoriesLoaded) {
+        loadCategories();
+      }
     } else if (activeTab === "excluded-channels") {
       loadChannels();
     } else if (
@@ -123,10 +128,12 @@ function PlaylistEditModal({ playlist, onClose, onSave }: Props) {
     }
   };
 
-  const loadCategories = async () => {
+  const loadCategories = async (options?: { silent?: boolean }) => {
     try {
-      setLoadingCategories(true);
-      const data = await api.getCategories(playlist.id!);
+      if (!options?.silent) {
+        setLoadingCategories(true);
+      }
+      const data = await api.getCategories(playlist.id!, { full: true });
       setCategories(data);
       setSyncSelection(
         new Set(
@@ -135,10 +142,13 @@ function PlaylistEditModal({ playlist, onClose, onSave }: Props) {
             .map((c) => c.categoryId)
         )
       );
+      setCategoriesLoaded(true);
     } catch (err: any) {
       setError("Failed to load categories");
     } finally {
-      setLoadingCategories(false);
+      if (!options?.silent) {
+        setLoadingCategories(false);
+      }
     }
   };
 

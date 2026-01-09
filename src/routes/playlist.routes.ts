@@ -190,6 +190,9 @@ router.get("/:id", async (req: Request, res: Response) => {
     res.json({
       ...parsed,
       channelCount: await PlaylistRepository.getChannelCount(id),
+      filteredChannelCount: await PlaylistRepository.getFilteredChannelCount(id),
+      categoryCount: await PlaylistRepository.getCategoryCount(id),
+      filteredCategoryCount: await PlaylistRepository.getFilteredCategoryCount(id),
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -234,10 +237,20 @@ router.post("/", async (req: Request, res: Response) => {
       identifierSource: "channel-name", // Default to channel name as identifier
     };
 
-    const created = await PlaylistRepository.create(
-      playlistData as any,
-      userId
-    );
+    // If no EPG is specified, assign the user's default EPG file (if any)
+    try {
+      const defaultEpg = await prisma.epgFile.findFirst({
+        where: { userId, isDefault: true },
+        select: { id: true },
+      });
+      if (defaultEpg) {
+        (playlistData as any).epgFileId = defaultEpg.id;
+      }
+    } catch (e) {
+      // Non-fatal: if default lookup fails, continue without setting
+    }
+
+    const created = await PlaylistRepository.create(playlistData as any, userId);
     res.status(201).json(created);
   } catch (error: any) {
     res.status(400).json({ error: error.message });
@@ -608,8 +621,47 @@ router.get("/:id/categories", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
     const id = parseInt(req.params.id);
+    const returnFullList = req.query.full === "true";
+
+    // Always fetch all categories from DB
     const categories = await PlaylistRepository.getCategories(id);
-    res.json(categories);
+
+    if (returnFullList) {
+      // Settings modal needs the complete list (with isSelected flags)
+      return res.json(categories);
+    }
+
+    // For dashboard views, filter categories based on playlist settings
+    const playlist = await PlaylistRepository.findById(id, userId);
+    if (!playlist) {
+      return res.status(404).json({ error: "Playlist not found" });
+    }
+
+    let hiddenCategoryIds: string[] = [];
+    if (playlist.hiddenCategories) {
+      try {
+        hiddenCategoryIds = JSON.parse(playlist.hiddenCategories as any);
+        if (!Array.isArray(hiddenCategoryIds)) hiddenCategoryIds = [];
+      } catch {
+        hiddenCategoryIds = [];
+      }
+    }
+
+    const selectedCategoryIds = await PlaylistRepository.getSelectedCategoryIds(
+      id
+    );
+
+    const filtered = categories.filter((cat) => {
+      // Exclude hidden categories
+      if (hiddenCategoryIds.includes(cat.categoryId)) return false;
+      // If a selection allowlist exists, only include selected ones
+      if (selectedCategoryIds.length > 0) {
+        return selectedCategoryIds.includes(cat.categoryId);
+      }
+      return true;
+    });
+
+    res.json(filtered);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -644,23 +696,70 @@ router.get("/:id/channels", async (req: Request, res: Response) => {
     let channels;
     let total;
 
+    // Load playlist filters
+    const playlist = await PlaylistRepository.findById(id, userId);
+    if (!playlist) {
+      return res.status(404).json({ error: "Playlist not found" });
+    }
+    let hiddenCategoryIds: string[] = [];
+    let excludedChannelIds: string[] = [];
+    const includeUncategorized = playlist.includeUncategorizedChannels !== 0;
+
+    if (playlist.hiddenCategories) {
+      try {
+        hiddenCategoryIds = JSON.parse(playlist.hiddenCategories as any);
+        if (!Array.isArray(hiddenCategoryIds)) hiddenCategoryIds = [];
+      } catch {
+        hiddenCategoryIds = [];
+      }
+    }
+    if (playlist.excludedChannels) {
+      try {
+        excludedChannelIds = JSON.parse(playlist.excludedChannels as any);
+        if (!Array.isArray(excludedChannelIds)) excludedChannelIds = [];
+      } catch {
+        excludedChannelIds = [];
+      }
+    }
+
+    // Selected categories (isSelected = 1) should act as an allowlist when present
+    const selectedCategoryIds = await PlaylistRepository.getSelectedCategoryIds(id);
+
+    const filterConfig = {
+      hiddenCategories: hiddenCategoryIds,
+      excludedChannels: excludedChannelIds,
+      includeUncategorized,
+      selectedCategoryIds,
+    };
+
     if (search) {
-      console.log(`[API] Search mode: "${search}" (limit: ${Math.min(limit, 500)})`);
-      // For search, use the optimized search method with limit
+      console.log(
+        `[API] Search mode: "${search}" (limit: ${Math.min(limit, 500)})`
+      );
+      // Apply the same filtering rules during search
       const searchStart = Date.now();
-      channels = await PlaylistRepository.searchChannels(
+      channels = await PlaylistRepository.getChannels(
         id,
-        search,
-        Math.min(limit, 500)
+        undefined,
+        {
+          search,
+          take: Math.min(limit, 500),
+        },
+        filterConfig
       );
       total = channels.length; // Approximate total for search
-      console.log(`[API] Search completed in ${Date.now() - searchStart}ms: ${channels.length} channels`);
+      console.log(
+        `[API] Search completed in ${Date.now() - searchStart}ms: ${
+          channels.length
+        } channels`
+      );
     } else {
       // Get total count for pagination
       const countStart = Date.now();
       total = await PlaylistRepository.getChannelCountWithFilter(
         id,
-        categoryId
+        categoryId,
+        filterConfig
       );
       console.log(`[API] Count query completed in ${Date.now() - countStart}ms: ${total} total channels`);
 
@@ -670,10 +769,15 @@ router.get("/:id/channels", async (req: Request, res: Response) => {
       
       console.log(`[API] Fetching channels (skip: ${skip ?? "none"}, take: ${take ?? "all"})...`);
       const fetchStart = Date.now();
-      channels = await PlaylistRepository.getChannels(id, categoryId, {
-        skip,
-        take,
-      });
+      channels = await PlaylistRepository.getChannels(
+        id,
+        categoryId,
+        {
+          skip,
+          take,
+        },
+        filterConfig
+      );
       console.log(`[API] Fetch completed in ${Date.now() - fetchStart}ms: ${channels.length} channels`);
     }
 
@@ -720,7 +824,42 @@ router.get("/:id/export", async (req: Request, res: Response) => {
       return res.status(404).json({ error: "Playlist not found" });
     }
 
-    let channels = await PlaylistRepository.getChannels(id);
+    // Respect hidden/excluded when exporting
+    let hiddenCategoryIds: string[] = [];
+    let excludedChannelIds: string[] = [];
+    const includeUncategorized = playlist.includeUncategorizedChannels !== 0;
+    if (playlist.hiddenCategories) {
+      try {
+        hiddenCategoryIds = JSON.parse(playlist.hiddenCategories as any);
+        if (!Array.isArray(hiddenCategoryIds)) hiddenCategoryIds = [];
+      } catch {
+        hiddenCategoryIds = [];
+      }
+    }
+    if (playlist.excludedChannels) {
+      try {
+        excludedChannelIds = JSON.parse(playlist.excludedChannels as any);
+        if (!Array.isArray(excludedChannelIds)) excludedChannelIds = [];
+      } catch {
+        excludedChannelIds = [];
+      }
+    }
+
+    const selectedCategoryIds = await PlaylistRepository.getSelectedCategoryIds(
+      id
+    );
+
+    let channels = await PlaylistRepository.getChannels(
+      id,
+      undefined,
+      undefined,
+      {
+        hiddenCategories: hiddenCategoryIds,
+        excludedChannels: excludedChannelIds,
+        includeUncategorized,
+        selectedCategoryIds,
+      }
+    );
 
     // Sort channels: mapped first (by lineup order), then unmapped
     channels = await sortChannelsByMapping(channels);

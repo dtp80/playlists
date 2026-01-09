@@ -76,9 +76,14 @@ export const api = {
   },
 
   // Categories
-  getCategories: async (playlistId: number): Promise<Category[]> => {
+  getCategories: async (
+    playlistId: number,
+    options?: { full?: boolean }
+  ): Promise<Category[]> => {
+    const params = options?.full ? { full: "true" } : {};
     const response = await axios.get(
-      `${API_BASE}/playlists/${playlistId}/categories`
+      `${API_BASE}/playlists/${playlistId}/categories`,
+      { params }
     );
     return response.data;
   },
@@ -146,10 +151,14 @@ export const api = {
   },
 
   // Channel Lineup
-  getChannelLineup: async (): Promise<
+  getChannelLineup: async (
+    params?: { epgFileId?: number; epgGroupId?: number }
+  ): Promise<
     Array<{ name: string; logo: string; tvgId?: string; extGrp?: string }>
   > => {
-    const response = await axios.get(`${API_BASE}/channel-lineup`);
+    const response = await axios.get(`${API_BASE}/channel-lineup`, {
+      params: params || {},
+    });
     return response.data;
   },
 

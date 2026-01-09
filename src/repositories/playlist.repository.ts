@@ -6,6 +6,13 @@ export class PlaylistRepository {
    * Create a new playlist
    */
   static async create(playlist: Playlist, userId: number): Promise<Playlist> {
+    // New playlists should be appended to the bottom: compute next sortOrder
+    const maxSort = await prisma.playlist.aggregate({
+      where: { userId },
+      _max: { sortOrder: true },
+    });
+    const nextSortOrder = (maxSort._max.sortOrder ?? 0) + 1;
+
     const created = await prisma.playlist.create({
       data: {
         userId,
@@ -14,6 +21,7 @@ export class PlaylistRepository {
         url: playlist.url,
         username: playlist.username || null,
         password: playlist.password || null,
+        sortOrder: nextSortOrder,
       },
     });
 
@@ -42,7 +50,7 @@ export class PlaylistRepository {
   static async findAll(userId: number): Promise<Playlist[]> {
     const playlists = await prisma.playlist.findMany({
       where: { userId },
-      orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
+      orderBy: [{ sortOrder: "asc" }, { id: "asc" }],
     });
 
     return playlists as any;
@@ -293,6 +301,12 @@ export class PlaylistRepository {
       skip?: number;
       take?: number;
       search?: string;
+    },
+    filters?: {
+      hiddenCategories?: string[];
+      excludedChannels?: string[];
+      includeUncategorized?: boolean;
+      selectedCategoryIds?: string[];
     }
   ): Promise<Channel[]> {
     const where: any = { playlistId };
@@ -311,6 +325,43 @@ export class PlaylistRepository {
       } else {
         // Only include channels with matching category
         where.categoryId = categoryId;
+      }
+    }
+    // If no specific category requested, but playlist has selected categories, limit to them
+    if (!categoryId && filters?.selectedCategoryIds && filters.selectedCategoryIds.length > 0) {
+      const includeUncategorized =
+        filters.includeUncategorized === undefined
+          ? true
+          : !!filters.includeUncategorized;
+      if (includeUncategorized) {
+        where.OR = [
+          { categoryId: { in: filters.selectedCategoryIds } },
+          { categoryId: null },
+          { categoryId: "" },
+        ];
+      } else {
+        where.categoryId = { in: filters.selectedCategoryIds };
+      }
+    }
+
+    // Apply exclusions
+    if (filters?.excludedChannels && filters.excludedChannels.length > 0) {
+      where.streamId = { notIn: filters.excludedChannels };
+    }
+
+    // Apply hidden categories
+    if (filters?.hiddenCategories && filters.hiddenCategories.length > 0) {
+      const includeUncategorized =
+        filters.includeUncategorized === undefined
+          ? true
+          : !!filters.includeUncategorized;
+      if (includeUncategorized) {
+        where.NOT = [{ categoryId: { in: filters.hiddenCategories } }];
+      } else {
+        where.categoryId = {
+          notIn: filters.hiddenCategories,
+          not: { in: [null, ""] },
+        } as any;
       }
     }
 
@@ -395,7 +446,13 @@ export class PlaylistRepository {
    */
   static async getChannelCountWithFilter(
     playlistId: number,
-    categoryId?: string
+    categoryId?: string,
+    filters?: {
+      hiddenCategories?: string[];
+      excludedChannels?: string[];
+      includeUncategorized?: boolean;
+      selectedCategoryIds?: string[];
+    }
   ): Promise<number> {
     const where: any = { playlistId };
 
@@ -409,6 +466,40 @@ export class PlaylistRepository {
         where.OR = [{ categoryId }, { categoryId: null }, { categoryId: "" }];
       } else {
         where.categoryId = categoryId;
+      }
+    }
+    if (!categoryId && filters?.selectedCategoryIds && filters.selectedCategoryIds.length > 0) {
+      const includeUncategorized =
+        filters.includeUncategorized === undefined
+          ? true
+          : !!filters.includeUncategorized;
+      if (includeUncategorized) {
+        where.OR = [
+          { categoryId: { in: filters.selectedCategoryIds } },
+          { categoryId: null },
+          { categoryId: "" },
+        ];
+      } else {
+        where.categoryId = { in: filters.selectedCategoryIds };
+      }
+    }
+
+    if (filters?.excludedChannels && filters.excludedChannels.length > 0) {
+      where.streamId = { notIn: filters.excludedChannels };
+    }
+
+    if (filters?.hiddenCategories && filters.hiddenCategories.length > 0) {
+      const includeUncategorized =
+        filters.includeUncategorized === undefined
+          ? true
+          : !!filters.includeUncategorized;
+      if (includeUncategorized) {
+        where.NOT = [{ categoryId: { in: filters.hiddenCategories } }];
+      } else {
+        where.categoryId = {
+          notIn: filters.hiddenCategories,
+          not: { in: [null, ""] },
+        } as any;
       }
     }
 
@@ -437,6 +528,7 @@ export class PlaylistRepository {
     let hiddenCategoryIds: string[] = [];
     let excludedChannelIds: string[] = [];
     const includeUncategorized = playlist.includeUncategorizedChannels !== 0;
+    const selectedCategoryIds = await this.getSelectedCategoryIds(playlistId);
 
     if (playlist.hiddenCategories) {
       try {
@@ -461,40 +553,37 @@ export class PlaylistRepository {
     }
 
     const where: any = { playlistId };
-    const AND: any[] = [];
+
+    // Selected categories act as an allowlist when present
+    if (selectedCategoryIds.length > 0) {
+      if (includeUncategorized) {
+        where.OR = [
+          { categoryId: { in: selectedCategoryIds } },
+          { categoryId: null },
+          { categoryId: "" },
+        ];
+      } else {
+        where.categoryId = { in: selectedCategoryIds };
+      }
+    }
 
     // Exclude explicitly excluded channels
     if (excludedChannelIds.length > 0) {
-      AND.push({
-        streamId: { notIn: excludedChannelIds },
-      });
+      where.streamId = { notIn: excludedChannelIds };
     }
 
     // Handle category filtering
     if (hiddenCategoryIds.length > 0) {
       if (includeUncategorized) {
         // Include channels NOT in hidden categories OR uncategorized channels
-        AND.push({
-          OR: [
-            { categoryId: { notIn: hiddenCategoryIds } },
-            { categoryId: null },
-            { categoryId: "" },
-          ],
-        });
+        where.NOT = [{ categoryId: { in: hiddenCategoryIds } }];
       } else {
         // Only include channels NOT in hidden categories (exclude uncategorized)
-        AND.push({
-          AND: [
-            { categoryId: { notIn: hiddenCategoryIds } },
-            { categoryId: { not: null } },
-            { categoryId: { not: "" } },
-          ],
-        });
+        where.categoryId = {
+          notIn: hiddenCategoryIds,
+          not: { in: [null, ""] },
+        } as any;
       }
-    }
-
-    if (AND.length > 0) {
-      where.AND = AND;
     }
 
     return await prisma.channel.count({ where });
@@ -523,19 +612,29 @@ export class PlaylistRepository {
     }
 
     const where: any = { playlistId };
+    const selectedCategoryIds = await this.getSelectedCategoryIds(playlistId);
 
     // Exclude hidden categories
+    let hiddenCategories: string[] = [];
     if (playlist.hiddenCategories) {
       try {
-        const hiddenCategories = JSON.parse(
-          playlist.hiddenCategories as string
-        );
-        if (Array.isArray(hiddenCategories) && hiddenCategories.length > 0) {
-          where.categoryId = { notIn: hiddenCategories };
-        }
+        hiddenCategories = JSON.parse(playlist.hiddenCategories as string);
       } catch (e) {
-        // Ignore parse errors
+        hiddenCategories = [];
       }
+    }
+
+    const AND: any[] = [];
+    if (hiddenCategories.length > 0) {
+      AND.push({ categoryId: { notIn: hiddenCategories } });
+    }
+
+    if (selectedCategoryIds.length > 0) {
+      AND.push({ categoryId: { in: selectedCategoryIds } });
+    }
+
+    if (AND.length > 0) {
+      where.AND = AND;
     }
 
     return await prisma.category.count({ where });

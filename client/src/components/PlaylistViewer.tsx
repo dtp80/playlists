@@ -82,6 +82,13 @@ function PlaylistViewer({ playlist, onSync, onEditPlaylist }: Props) {
     }
   }, [playlist, syncing]);
 
+  // When a new playlist is selected, default to "All Categories"
+  useEffect(() => {
+    if (!justSyncedRef.current) {
+      setSelectedCategory(null);
+    }
+  }, [playlist.id]);
+
   // Update current time every 30 seconds to refresh "last synced" display
   useEffect(() => {
     const interval = setInterval(() => {
@@ -216,26 +223,41 @@ function PlaylistViewer({ playlist, onSync, onEditPlaylist }: Props) {
       // Note: We don't manage loading state here to avoid conflicts with loadChannels()
       const categoriesData = await api.getCategories(playlist.id!);
 
-      // Filter out hidden categories
+      // Apply allowlist (isSelected) and hidden categories automatically
       const hiddenCategoryIds = new Set(playlist.hiddenCategories || []);
-      const visibleCategories = categoriesData.filter(
+      const selectedCategoryIds = categoriesData
+        .filter((c) => Number(c.isSelected) === 1 || c.isSelected === true)
+        .map((c) => c.categoryId);
+
+      const filteredForSelection =
+        selectedCategoryIds.length > 0
+          ? categoriesData.filter((cat) =>
+              selectedCategoryIds.includes(cat.categoryId)
+            )
+          : categoriesData;
+
+      const visibleCategories = filteredForSelection.filter(
         (cat) => !hiddenCategoryIds.has(cat.categoryId)
       );
+
       setCategories(visibleCategories);
       // Preload selection state for Xtream category modal
-      const initiallySelected = visibleCategories
-        .filter((c) => !!c.isSelected)
-        .map((c) => c.categoryId);
+      const initiallySelected =
+        selectedCategoryIds.length > 0
+          ? selectedCategoryIds
+          : visibleCategories
+              .filter((c) => !!c.isSelected)
+              .map((c) => c.categoryId);
       setCategorySyncSelection(new Set(initiallySelected));
       console.log(
-        `✅ Loaded ${visibleCategories.length} categories (${hiddenCategoryIds.size} hidden)`
+        `✅ Loaded ${visibleCategories.length} categories (${hiddenCategoryIds.size} hidden, ${selectedCategoryIds.length} selected)`
       );
 
-      // Clear selected category if it's now hidden
-      if (selectedCategory && hiddenCategoryIds.has(selectedCategory)) {
-        console.log(
-          `⚠️ Clearing selected category (now hidden): ${selectedCategory}`
-        );
+      // Clear selected category if it's no longer visible
+      const hasSelected =
+        selectedCategory &&
+        visibleCategories.some((c) => c.categoryId === selectedCategory);
+      if (!hasSelected) {
         setSelectedCategory(null);
       }
     } catch (err: any) {
@@ -281,13 +303,15 @@ function PlaylistViewer({ playlist, onSync, onEditPlaylist }: Props) {
 
       // Check if pagination is needed
       const totalCount = playlist.channelCount ?? 0;
+      const filteredCount = playlist.filteredChannelCount ?? totalCount;
       const hasActiveFilters =
         (playlist.hiddenCategories && playlist.hiddenCategories.length > 0) ||
-        (playlist.excludedChannels && playlist.excludedChannels.length > 0);
+        (playlist.excludedChannels && playlist.excludedChannels.length > 0) ||
+        filteredCount !== totalCount;
 
       // If filters are active, use filteredChannelCount instead of total
       const effectiveChannelCount = hasActiveFilters
-        ? playlist.filteredChannelCount ?? totalCount
+        ? filteredCount
         : totalCount;
 
       console.log("📊 Channel Load Config:", {
@@ -1204,6 +1228,13 @@ function PlaylistViewer({ playlist, onSync, onEditPlaylist }: Props) {
     }
   };
 
+  // Channel count shown in header/dropdowns: prefer the latest loaded total, then filtered count, then raw count
+  const displayedChannelCount =
+    totalChannels ||
+    localPlaylist.filteredChannelCount ||
+    localPlaylist.channelCount ||
+    0;
+
   return (
     <div className="playlist-viewer">
       {cooldownMessage && (
@@ -1235,10 +1266,7 @@ function PlaylistViewer({ playlist, onSync, onEditPlaylist }: Props) {
           <div className="header-meta">
             <span className="badge">{localPlaylist.type.toUpperCase()}</span>
             <span className="text-secondary">
-              {localPlaylist.filteredChannelCount ||
-                localPlaylist.channelCount ||
-                0}{" "}
-              channels
+              {displayedChannelCount} channels
             </span>
           </div>
         </div>
@@ -1633,11 +1661,7 @@ function PlaylistViewer({ playlist, onSync, onEditPlaylist }: Props) {
             onChange={(e) => setSelectedCategory(e.target.value || null)}
           >
             <option value="">
-              All Categories (
-              {localPlaylist.filteredChannelCount ||
-                localPlaylist.channelCount ||
-                0}
-              )
+              All Categories ({displayedChannelCount})
             </option>
             {categories.map((cat) => (
               <option key={cat.categoryId} value={cat.categoryId}>

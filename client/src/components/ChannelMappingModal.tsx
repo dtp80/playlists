@@ -59,12 +59,20 @@ function ChannelMappingModal({
   const loadLineup = async () => {
     try {
       setLoading(true);
-      const data = await api.getChannelLineup();
+
+      // Fetch playlist to determine assigned EPG / group (use only that lineup)
+      const playlist = await api.getPlaylist(playlistId);
+      const epgFileId = playlist?.epgFileId || undefined;
+      const epgGroupId = !epgFileId ? playlist?.epgGroupId || undefined : undefined;
+
+      const data = await api.getChannelLineup({ epgFileId, epgGroupId });
 
       // Sort: mapped to non-default category first, then rest
       const sorted = [...data].sort((a, b) => {
-        const aNonDefault = a.extGrp && a.extGrp.toLowerCase() !== "imported channels";
-        const bNonDefault = b.extGrp && b.extGrp.toLowerCase() !== "imported channels";
+        const aNonDefault =
+          a.extGrp && a.extGrp.toLowerCase() !== "imported channels";
+        const bNonDefault =
+          b.extGrp && b.extGrp.toLowerCase() !== "imported channels";
         if (aNonDefault && !bNonDefault) return -1;
         if (!aNonDefault && bNonDefault) return 1;
         return a.name.localeCompare(b.name);

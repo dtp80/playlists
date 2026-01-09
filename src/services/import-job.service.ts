@@ -104,11 +104,6 @@ export class ImportJobService {
         );
       }
 
-      // Get all channels from the playlist
-      const playlistChannels = await PlaylistRepository.getChannels(
-        job.playlistId
-      );
-
       // Apply playlist filters: hidden categories and excluded channels
       let hiddenCategoryIds: string[] = [];
       let excludedChannelIds: string[] = [];
@@ -138,6 +133,23 @@ export class ImportJobService {
           excludedChannelIds = [];
         }
       }
+
+      // Selected categories act as an allowlist; hidden/excluded also apply
+      const selectedCategoryIds =
+        await PlaylistRepository.getSelectedCategoryIds(job.playlistId);
+
+      // Get playlist channels with filters applied
+      const playlistChannels = await PlaylistRepository.getChannels(
+        job.playlistId,
+        undefined,
+        undefined,
+        {
+          hiddenCategories: hiddenCategoryIds,
+          excludedChannels: excludedChannelIds,
+          includeUncategorized,
+          selectedCategoryIds,
+        }
+      );
 
       const filteredPlaylistChannels = playlistChannels.filter((ch) => {
         // Exclude channels explicitly excluded

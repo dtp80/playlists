@@ -9,9 +9,45 @@ const router = Router();
 router.get("/", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
+    const epgFileId = req.query.epgFileId
+      ? parseInt(req.query.epgFileId as string)
+      : undefined;
+    const epgGroupId = req.query.epgGroupId
+      ? parseInt(req.query.epgGroupId as string)
+      : undefined;
+
+    // Resolve EPG scope: explicit file > group > default file
+    let resolvedIds: number[] | undefined;
+    if (!isNaN(epgFileId as any) && epgFileId !== undefined) {
+      resolvedIds = [epgFileId];
+    } else if (!isNaN(epgGroupId as any) && epgGroupId !== undefined) {
+      const groupFiles = await prisma.epgFile.findMany({
+        where: { userId, epgGroupId },
+        select: { id: true },
+      });
+      const ids = groupFiles.map((f) => f.id);
+      if (ids.length > 0) {
+        resolvedIds = ids;
+      }
+    } else {
+      const defaultEpg = await prisma.epgFile.findFirst({
+        where: { userId, isDefault: true },
+        select: { id: true },
+      });
+      if (defaultEpg) {
+        resolvedIds = [defaultEpg.id];
+      }
+    }
+
+    // If no EPG scope could be resolved, return empty to avoid mixing EPGs
+    if (!resolvedIds || resolvedIds.length === 0) {
+      return res.json([]);
+    }
+
+    const where: any = { userId, epgFileId: { in: resolvedIds } };
 
     const channels = await prisma.channelLineup.findMany({
-      where: { userId },
+      where,
       select: {
         name: true,
         tvgLogo: true,
