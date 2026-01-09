@@ -3,6 +3,7 @@ import { XtreamService } from "./xtream.service";
 import { M3UService } from "./m3u.service";
 import { PlaylistRepository } from "../repositories/playlist.repository";
 import { Channel, Category } from "@prisma/client";
+import axios from "axios";
 
 export class PlaylistSyncJobService {
   /**
@@ -40,6 +41,36 @@ export class PlaylistSyncJobService {
     });
 
     return job.id;
+  }
+
+  private static diffAdded(
+    newChannels: Channel[],
+    previousJson: string
+  ): Array<{ name: string; streamId: string }> {
+    try {
+      const prev = JSON.parse(previousJson) as Channel[];
+      const prevIds = new Set(prev.map((c) => c.streamId));
+      return newChannels
+        .filter((c) => !prevIds.has(c.streamId))
+        .map((c) => ({ name: c.name, streamId: c.streamId }));
+    } catch {
+      return [];
+    }
+  }
+
+  private static diffRemoved(
+    newChannels: Channel[],
+    previousJson: string
+  ): Array<{ name: string; streamId: string }> {
+    try {
+      const prev = JSON.parse(previousJson) as Channel[];
+      const newIds = new Set(newChannels.map((c) => c.streamId));
+      return prev
+        .filter((c) => !newIds.has(c.streamId))
+        .map((c) => ({ name: c.name, streamId: c.streamId }));
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -386,10 +417,30 @@ export class PlaylistSyncJobService {
     });
 
     // Update playlist lastSyncedAt
-    await prisma.playlist.update({
+    const playlist = await prisma.playlist.update({
       where: { id: job.playlistId },
       data: { lastSyncedAt: new Date(), lastChannelsSyncedAt: new Date() },
+      select: { id: true, name: true, userId: true },
     });
+
+    // Send Telegram summary (best effort, silent)
+    try {
+      await this.sendTelegramSummary({
+        userId: playlist.userId,
+        playlistName: playlist.name,
+        playlistId: playlist.id,
+        totalCategories: job.totalCategories || 0,
+        totalChannels: job.totalChannels || channels.length,
+        addedChannels: job.channelsData
+          ? this.diffAdded(channels, job.channelsData)
+          : [],
+        removedChannels: job.channelsData
+          ? this.diffRemoved(channels, job.channelsData)
+          : [],
+      });
+    } catch (err) {
+      console.warn(`[Sync Job ${jobId}] Telegram summary failed`, err);
+    }
 
     return true; // Done!
   }
@@ -401,5 +452,76 @@ export class PlaylistSyncJobService {
     return await prisma.playlistSyncJob.findUnique({
       where: { id: jobId },
     });
+  }
+
+  private static async sendTelegramSummary(params: {
+    userId: number;
+    playlistName: string;
+    playlistId: number;
+    totalCategories: number;
+    totalChannels: number;
+    addedChannels?: Array<{ name: string; streamId: string }>;
+    removedChannels?: Array<{ name: string; streamId: string }>;
+  }) {
+    const settings = await prisma.setting.findMany({
+      where: {
+        key: {
+          in: [
+            "telegramBotToken",
+            "telegramChatId",
+            "telegramSendSummaries",
+          ],
+        },
+      },
+    });
+
+    const map = new Map(settings.map((s) => [s.key, s.value]));
+    const enabled = map.get("telegramSendSummaries") === "1";
+    const botToken = map.get("telegramBotToken");
+    const chatId = map.get("telegramChatId");
+
+    if (!enabled || !botToken || !chatId) {
+      return;
+    }
+
+    const lines = [
+      `✅ Playlist Sync Completed`,
+      `Playlist: ${params.playlistName} (ID ${params.playlistId})`,
+      `Channels: ${params.totalChannels.toLocaleString()}`,
+      `Categories: ${params.totalCategories.toLocaleString()}`,
+    ];
+
+    const addedList = (params.addedChannels || [])
+      .slice(0, 20)
+      .map((c) => `+ ${c.name}`);
+    const removedList = (params.removedChannels || [])
+      .slice(0, 20)
+      .map((c) => `- ${c.name}`);
+
+    if (addedList.length > 0) {
+      lines.push("", "Added:", ...addedList);
+      if ((params.addedChannels || []).length > addedList.length) {
+        lines.push(
+          `... and ${(params.addedChannels || []).length - addedList.length} more`
+        );
+      }
+    }
+
+    if (removedList.length > 0) {
+      lines.push("", "Removed:", ...removedList);
+      if ((params.removedChannels || []).length > removedList.length) {
+        lines.push(
+          `... and ${(params.removedChannels || []).length - removedList.length} more`
+        );
+      }
+    }
+
+    const text = lines.join("\n");
+
+    await axios.post(
+      `https://api.telegram.org/bot${botToken}/sendMessage`,
+      { chat_id: chatId, text },
+      { timeout: 10000 }
+    );
   }
 }

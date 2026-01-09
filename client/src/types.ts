@@ -149,3 +149,12 @@ export interface AuthResponse {
   requires2FASetup?: boolean;
   user?: User;
 }
+
+export interface SettingsResponse {
+  debugMode: boolean;
+  bypass2FA: boolean;
+  syncTimeout: number;
+  telegramBotToken?: string;
+  telegramChatId?: string;
+  telegramSendSummaries?: boolean;
+}

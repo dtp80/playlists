@@ -70,6 +70,13 @@ function AdminModal({ onClose, onPlaylistsReordered, user }: Props) {
   const [debugMode, setDebugMode] = useState(true);
   const [bypass2FA, setBypass2FA] = useState(false);
   const [syncTimeout, setSyncTimeout] = useState(60);
+  const [telegramBotToken, setTelegramBotToken] = useState("");
+  const [telegramChatId, setTelegramChatId] = useState("");
+  const [telegramSendSummaries, setTelegramSendSummaries] = useState(false);
+  const [prevTelegramBotToken, setPrevTelegramBotToken] = useState("");
+  const [prevTelegramChatId, setPrevTelegramChatId] = useState("");
+  const [prevTelegramSendSummaries, setPrevTelegramSendSummaries] =
+    useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
   const [editingChannel, setEditingChannel] = useState<LineupChannel | null>(
     null
@@ -198,6 +205,12 @@ function AdminModal({ onClose, onPlaylistsReordered, user }: Props) {
       setDebugMode(settings.debugMode);
       setBypass2FA(settings.bypass2FA);
       setSyncTimeout(settings.syncTimeout || 60);
+      setTelegramBotToken(settings.telegramBotToken || "");
+      setTelegramChatId(settings.telegramChatId || "");
+      setTelegramSendSummaries(Boolean(settings.telegramSendSummaries));
+      setPrevTelegramBotToken(settings.telegramBotToken || "");
+      setPrevTelegramChatId(settings.telegramChatId || "");
+      setPrevTelegramSendSummaries(Boolean(settings.telegramSendSummaries));
     } catch (err: any) {
       console.error("Failed to load settings:", err);
     }
@@ -925,6 +938,90 @@ function AdminModal({ onClose, onPlaylistsReordered, user }: Props) {
         confirmVariant: "danger",
       });
     } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  const handleSaveTelegram = async () => {
+    if (!telegramBotToken || !telegramChatId) {
+      setConfirmModal({
+        title: "Telegram Required",
+        message: "Please provide both Bot Token and Chat ID before testing.",
+        confirmVariant: "warning",
+      });
+      return;
+    }
+
+    try {
+      setSavingSettings(true);
+      // Send test message without persisting
+      await api.testTelegram({
+        botToken: telegramBotToken,
+        chatId: telegramChatId,
+      });
+
+      // Ask user to confirm receipt; only then persist
+      setConfirmModal({
+        title: "Test Message Sent",
+        message: "We sent a test Telegram message. Did you receive it?",
+        confirmText: "Yes",
+        cancelText: "No",
+        confirmVariant: "primary",
+        onConfirm: async () => {
+          try {
+            await api.updateSettings({
+              telegramBotToken,
+              telegramChatId,
+              telegramSendSummaries,
+            });
+            setPrevTelegramBotToken(telegramBotToken);
+            setPrevTelegramChatId(telegramChatId);
+            setPrevTelegramSendSummaries(telegramSendSummaries);
+            setConfirmModal({
+              title: "Saved",
+              message: "Telegram settings saved.",
+              confirmText: "OK",
+              onConfirm: () => setConfirmModal(null),
+              confirmVariant: "success",
+            });
+          } catch (err: any) {
+            setConfirmModal({
+              title: "Error",
+              message: "Failed to save Telegram settings",
+              confirmVariant: "danger",
+            });
+          } finally {
+            setSavingSettings(false);
+          }
+        },
+      });
+
+      // Handle No choice by separate modal
+      setConfirmModal((prev) =>
+        prev
+          ? {
+              ...prev,
+              onConfirm: prev.onConfirm,
+              cancelText: "No",
+              onCancel: () => {
+                setTelegramBotToken(prevTelegramBotToken);
+                setTelegramChatId(prevTelegramChatId);
+                setTelegramSendSummaries(prevTelegramSendSummaries);
+                setSavingSettings(false);
+                setConfirmModal(null);
+              },
+            }
+          : prev
+      );
+    } catch (err: any) {
+      console.error("Failed to send Telegram test:", err);
+      setConfirmModal({
+        title: "Error",
+        message:
+          "Failed to send Telegram test message: " +
+          (err?.response?.data?.error || err.message),
+        confirmVariant: "danger",
+      });
       setSavingSettings(false);
     }
   };
@@ -1764,6 +1861,62 @@ function AdminModal({ onClose, onPlaylistsReordered, user }: Props) {
         <div className="modal-body">
           {activeTab === "general" && isAdmin && (
             <div className="tab-content">
+              <div className="settings-section">
+                <h3>Telegram Account Setup</h3>
+                <p className="setting-description">
+                  Provide a Telegram Bot token and your chat ID so the app can send
+                  sync summaries to you. (Bot token and chat ID are stored locally.)
+                </p>
+                <div className="setting-item">
+                  <label className="setting-label">
+                    <span className="setting-text">Bot Token</span>
+                  </label>
+                  <input
+                    type="text"
+                    className="setting-input"
+                    style={{ width: "100%", maxWidth: "420px" }}
+                    placeholder="123456:ABC-DEF..."
+                    value={telegramBotToken}
+                    onChange={(e) => setTelegramBotToken(e.target.value)}
+                    disabled={savingSettings}
+                  />
+                </div>
+                <div className="setting-item">
+                  <label className="setting-label">
+                    <span className="setting-text">Chat ID</span>
+                  </label>
+                  <input
+                    type="text"
+                    className="setting-input"
+                    style={{ width: "100%", maxWidth: "420px" }}
+                    placeholder="Your chat ID"
+                    value={telegramChatId}
+                    onChange={(e) => setTelegramChatId(e.target.value)}
+                    disabled={savingSettings}
+                  />
+                </div>
+                <div className="setting-item">
+                  <label className="setting-label">
+                    <input
+                      type="checkbox"
+                      checked={telegramSendSummaries}
+                      onChange={(e) => setTelegramSendSummaries(e.target.checked)}
+                      disabled={savingSettings}
+                    />
+                    <span className="setting-text">Send sync summaries via Telegram</span>
+                  </label>
+                </div>
+                <div className="settings-actions">
+                  <button
+                    className="btn btn-primary"
+                    onClick={handleSaveTelegram}
+                    disabled={savingSettings}
+                  >
+                    {savingSettings ? "Saving..." : "Save Telegram Settings"}
+                  </button>
+                </div>
+              </div>
+
               <div className="settings-section">
                 <h3>Debug Settings</h3>
                 <div className="setting-item">

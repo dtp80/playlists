@@ -309,6 +309,9 @@ export const api = {
     debugMode: boolean;
     bypass2FA: boolean;
     syncTimeout: number;
+    telegramBotToken?: string;
+    telegramChatId?: string;
+    telegramSendSummaries?: boolean;
   }> => {
     const response = await axios.get(`${API_BASE}/settings`);
     return response.data;
@@ -318,6 +321,9 @@ export const api = {
     debugMode?: boolean;
     bypass2FA?: boolean;
     syncTimeout?: number;
+    telegramBotToken?: string;
+    telegramChatId?: string;
+    telegramSendSummaries?: boolean;
   }): Promise<{ success: boolean }> => {
     const response = await axios.put(`${API_BASE}/settings`, settings);
     return response.data;
@@ -505,6 +511,16 @@ export const api = {
       { schedule },
       { withCredentials: true }
     );
+  },
+
+  // Telegram test
+  testTelegram: async (params: { botToken: string; chatId: string }) => {
+    const response = await axios.post(
+      `${API_BASE}/settings/telegram/test`,
+      params,
+      { withCredentials: true }
+    );
+    return response.data;
   },
 
   setCategorySelection: async (

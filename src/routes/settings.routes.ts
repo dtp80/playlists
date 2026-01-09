@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import prisma from "../database/prisma";
 import { requireAdmin } from "../middleware/auth.middleware";
+import axios from "axios";
 
 const router = Router();
 
@@ -20,6 +21,8 @@ router.get("/", async (req: Request, res: Response) => {
       } else if (setting.key === "syncTimeout") {
         // Convert to number with default of 60 seconds
         settingsObj[setting.key] = parseInt(setting.value || "60", 10);
+      } else if (setting.key === "telegramSendSummaries") {
+        settingsObj[setting.key] = setting.value === "1";
       } else {
         settingsObj[setting.key] = setting.value;
       }
@@ -41,7 +44,14 @@ router.get("/", async (req: Request, res: Response) => {
  */
 router.put("/", async (req: Request, res: Response) => {
   try {
-    const { debugMode, bypass2FA, syncTimeout } = req.body;
+    const {
+      debugMode,
+      bypass2FA,
+      syncTimeout,
+      telegramBotToken,
+      telegramChatId,
+      telegramSendSummaries,
+    } = req.body;
 
     if (debugMode !== undefined) {
       const value = debugMode ? "1" : "0";
@@ -90,9 +100,67 @@ router.put("/", async (req: Request, res: Response) => {
       });
     }
 
+    // Telegram bot token (string)
+    if (telegramBotToken !== undefined) {
+      await prisma.setting.upsert({
+        where: { key: "telegramBotToken" },
+        update: { value: telegramBotToken || "", updatedAt: new Date() },
+        create: { key: "telegramBotToken", value: telegramBotToken || "" },
+      });
+    }
+
+    // Telegram chat id (string)
+    if (telegramChatId !== undefined) {
+      await prisma.setting.upsert({
+        where: { key: "telegramChatId" },
+        update: { value: telegramChatId || "", updatedAt: new Date() },
+        create: { key: "telegramChatId", value: telegramChatId || "" },
+      });
+    }
+
+    // Telegram send summaries (boolean)
+    if (telegramSendSummaries !== undefined) {
+      const value = telegramSendSummaries ? "1" : "0";
+      await prisma.setting.upsert({
+        where: { key: "telegramSendSummaries" },
+        update: { value, updatedAt: new Date() },
+        create: { key: "telegramSendSummaries", value },
+      });
+    }
+
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/settings/telegram/test - Send a test message to verify Telegram settings (not persisted)
+ */
+router.post("/telegram/test", async (req: Request, res: Response) => {
+  try {
+    const { botToken, chatId } = req.body || {};
+
+    if (!botToken || !chatId) {
+      return res.status(400).json({ error: "botToken and chatId are required" });
+    }
+
+    const message =
+      "✅ Telegram test from IPTV Playlist Manager. If you see this, your bot and chat ID are working.";
+
+    await axios.post(
+      `https://api.telegram.org/bot${botToken}/sendMessage`,
+      {
+        chat_id: chatId,
+        text: message,
+      },
+      { timeout: 10000 }
+    );
+
+    res.json({ success: true });
+  } catch (error: any) {
+    const msg = error?.response?.data?.description || error.message || "Failed to send Telegram test";
+    res.status(400).json({ error: msg });
   }
 });
 

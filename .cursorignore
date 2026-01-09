@@ -1,9 +1,6 @@
 # Ignore README from linting
 README.md
 
-# Ignore documentation
-*.md
-
 # Ignore build artifacts
 dist/
 build/

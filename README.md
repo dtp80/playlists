@@ -53,20 +53,36 @@ A local-only IPTV playlist manager for desktop use (Mac/Windows/Linux). Runs ent
    npx prisma db push   # creates dev.db with the schema
    ```
 
-5. **Run the app (backend + frontend)**
+5. **Build for production (optional)**
 
-   ```bash
-   npm run dev
-   ```
-
-   - Backend: http://localhost:3000
-   - Frontend: http://localhost:5173
-
-6. **Build for production (optional)**
    ```bash
    npm run build    # builds server + client
    npm start        # serves built assets via Express
    ```
+
+   - Run the app in your browser: http://localhost:3000
+
+6. Telegram Setup (optional, for sync summaries)
+
+You can receive sync summaries via Telegram (manual and scheduled syncs).
+
+- **Create a bot**
+
+  - Open Telegram and talk to `@BotFather`.
+  - Send `/newbot`, follow prompts, copy the Bot Token (looks like `123456:ABC-DEF...`).
+
+- **Get your chat ID**
+
+  - Start a chat with your new bot (send any message).
+  - Open `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates` in a browser.
+  - Find `"chat":{"id":<number>}` — that number is your Chat ID.
+
+- **Configure in the app**
+  - Settings → Admin → Telegram Account Setup.
+  - Paste Bot Token and Chat ID, enable “Send sync summaries via Telegram”, click Save.
+  - A test message is sent; confirm you received it to persist settings.
+
+**Benefit:** automatic, silent notifications for playlist sync results (manual or scheduled), without needing the UI open.
 
 ## Default User (local-only)
 
