@@ -13,7 +13,7 @@ A local-only IPTV playlist manager for desktop use (Mac/Windows/Linux). Runs ent
 - Node.js 20+ and npm: https://nodejs.org/en/download
 - Git: https://git-scm.com/install
 
-## Quick Start (Mac/Windows/Linux) wfrom a terminal session
+## Quick Start (Mac/Windows/Linux) from a terminal session
 
 1. **Clone & enter the project**
 
