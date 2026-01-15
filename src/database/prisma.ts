@@ -1,20 +1,23 @@
+import "dotenv/config";
+import type { PrismaClient as PrismaClientType } from "@prisma/client";
 import { PrismaClient } from "@prisma/client";
+import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 import bcrypt from "bcrypt";
 
-// Local-first Prisma client (SQLite file by default)
-const globalForPrisma = global as unknown as { prisma: PrismaClient };
+// Ensure datasource URL is available at runtime (Prisma 7 expects env-based URL)
+const dbUrl = process.env.DATABASE_URL || "file:./dev.db";
+// Debug: ensure engine info
+// eslint-disable-next-line no-console
+console.log("[Prisma] Using adapter better-sqlite3, url:", dbUrl);
 
-const prismaUrl = process.env.DATABASE_URL || "file:./dev.db";
+// Local-first Prisma client (SQLite file by default)
+const globalForPrisma = global as unknown as { prisma: PrismaClientType };
 
 export const prisma =
   globalForPrisma.prisma ||
   new PrismaClient({
+    adapter: new PrismaBetterSqlite3({ url: dbUrl }),
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
-    datasources: {
-      db: {
-        url: prismaUrl,
-      },
-    },
   });
 
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;

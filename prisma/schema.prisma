@@ -3,12 +3,13 @@
 
 generator client {
   provider = "prisma-client-js"
+  // Driver adapter requires the client engine
+  engineType = "client"
 }
 
 datasource db {
   // Local file-based database for desktop use (SQLite)
   provider = "sqlite"
-  url      = env("DATABASE_URL")
 }
 
 model Playlist {

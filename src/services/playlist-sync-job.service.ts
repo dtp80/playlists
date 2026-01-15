@@ -189,10 +189,12 @@ export class PlaylistSyncJobService {
         );
 
         // Start saving channels in batches
+        // Start channel save phase with a fresh timer so long provider fetches
+        // don't consume the save-time budget and risk bailing before first batch
         return await this.saveChannelsBatch(
           jobId,
           channels,
-          startTime,
+          Date.now(),
           maxDuration
         );
       }
@@ -239,10 +241,12 @@ export class PlaylistSyncJobService {
           }
         }
 
+        // Resume saving with a fresh timer to ensure at least the first batch
+        // is written even if the previous phase was long-running
         return await this.saveChannelsBatch(
           jobId,
           channels,
-          startTime,
+          Date.now(),
           maxDuration
         );
       }
