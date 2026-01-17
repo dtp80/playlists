@@ -324,6 +324,14 @@ export class XtreamService {
       epgChannelId = xmltvMappings.get(xtreamChannel.name) || undefined;
     }
 
+    const fallbackCatchupDays =
+      m3uChannel?.catchupDays ??
+      (xtreamChannel.tv_archive_duration
+        ? String(xtreamChannel.tv_archive_duration)
+        : xtreamChannel.tv_archive
+          ? "1"
+          : null);
+
     return {
       playlistId,
       streamId: streamIdStr,
@@ -344,7 +352,7 @@ export class XtreamService {
       tvgRec: m3uChannel?.tvgRec || null,
       tvgChno: m3uChannel?.tvgChno || null,
       catchup: m3uChannel?.catchup || null,
-      catchupDays: m3uChannel?.catchupDays || null,
+      catchupDays: fallbackCatchupDays,
       catchupSource: m3uChannel?.catchupSource || null,
       catchupCorrection: m3uChannel?.catchupCorrection || null,
       // For Xtream, xui-id from M3U takes priority, then API xui_id, then stream_id

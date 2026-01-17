@@ -50,6 +50,10 @@ export interface Channel {
   catchupCorrection?: string;
   xuiId?: string;
   channelMapping?: string; // JSON: { name: string, logo: string }
+  isOperational?: boolean;
+  isOperationalManual?: boolean;
+  hasArchive?: boolean;
+  hasArchiveManual?: boolean;
 }
 
 export interface Category {

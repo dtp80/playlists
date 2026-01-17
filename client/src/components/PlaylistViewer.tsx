@@ -1243,6 +1243,50 @@ function PlaylistViewer({ playlist, onSync, onEditPlaylist }: Props) {
     }
   };
 
+  const handleToggleOperational = async (channel: Channel) => {
+    const nextValue = !(channel.isOperational ?? true);
+    const prevChannels = channels;
+    setChannels((prev) =>
+      prev.map((ch) =>
+        ch.streamId === channel.streamId
+          ? { ...ch, isOperational: nextValue, isOperationalManual: true }
+          : ch
+      )
+    );
+
+    try {
+      await api.updateChannelFlags(playlist.id!, channel.streamId, {
+        isOperational: nextValue,
+      });
+      await loadChannels(currentPage);
+    } catch (err: any) {
+      setChannels(prevChannels);
+      console.error("Failed to update operational status:", err);
+    }
+  };
+
+  const handleToggleArchive = async (channel: Channel) => {
+    const nextValue = !(channel.hasArchive ?? false);
+    const prevChannels = channels;
+    setChannels((prev) =>
+      prev.map((ch) =>
+        ch.streamId === channel.streamId
+          ? { ...ch, hasArchive: nextValue, hasArchiveManual: true }
+          : ch
+      )
+    );
+
+    try {
+      await api.updateChannelFlags(playlist.id!, channel.streamId, {
+        hasArchive: nextValue,
+      });
+      await loadChannels(currentPage);
+    } catch (err: any) {
+      setChannels(prevChannels);
+      console.error("Failed to update archive status:", err);
+    }
+  };
+
   // Channel count shown in header/dropdowns: prefer the latest loaded total, then filtered count, then raw count
   const displayedChannelCount =
     totalChannels ||
@@ -1706,6 +1750,8 @@ function PlaylistViewer({ playlist, onSync, onEditPlaylist }: Props) {
         playlistId={playlist.id}
         onExcludeChannel={handleExcludeChannel}
         onMapChannel={(channel) => setMappingChannel(channel)}
+        onToggleOperational={handleToggleOperational}
+        onToggleArchive={handleToggleArchive}
         isLargePlaylist={(playlist.channelCount ?? 0) > 10000}
         channelCount={playlist.channelCount}
       />

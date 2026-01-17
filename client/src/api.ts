@@ -92,11 +92,13 @@ export const api = {
   getChannels: async (
     playlistId: number,
     categoryId?: string,
-    search?: string
+    search?: string,
+    options?: { includeExcluded?: boolean }
   ): Promise<Channel[]> => {
     const params = new URLSearchParams();
     if (categoryId) params.append("categoryId", categoryId);
     if (search) params.append("search", search);
+    if (options?.includeExcluded) params.append("includeExcluded", "true");
     // Skip pagination to get all channels (for backward compatibility)
     params.append("skipPagination", "true");
 
@@ -105,6 +107,18 @@ export const api = {
     );
     // Handle new pagination response format
     return response.data.channels || response.data;
+  },
+
+  updateChannelFlags: async (
+    playlistId: number,
+    streamId: string,
+    flags: { isOperational?: boolean; hasArchive?: boolean }
+  ): Promise<{ success: boolean }> => {
+    const response = await axios.put(
+      `${API_BASE}/playlists/${playlistId}/channels/${streamId}/flags`,
+      flags
+    );
+    return response.data;
   },
 
   // Export

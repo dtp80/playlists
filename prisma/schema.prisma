@@ -93,6 +93,10 @@ model Channel {
   catchupCorrection String?
   xuiId             String?
   channelMapping    String?
+  isOperational     Boolean @default(true)
+  isOperationalManual Boolean @default(false)
+  hasArchive        Boolean @default(false)
+  hasArchiveManual  Boolean @default(false)
 
   // Relations
   playlist Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)

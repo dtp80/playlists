@@ -264,6 +264,31 @@ export class PlaylistRepository {
       existingMappings.map((m) => [m.streamId, m.channelMapping!])
     );
 
+    const manualStatuses = await prisma.channel.findMany({
+      where: {
+        playlistId,
+        OR: [{ isOperationalManual: true }, { hasArchiveManual: true }],
+      },
+      select: {
+        streamId: true,
+        isOperational: true,
+        isOperationalManual: true,
+        hasArchive: true,
+        hasArchiveManual: true,
+      },
+    });
+    const manualStatusMap = new Map(
+      manualStatuses.map((status) => [
+        status.streamId,
+        {
+          isOperational: status.isOperational,
+          isOperationalManual: status.isOperationalManual,
+          hasArchive: status.hasArchive,
+          hasArchiveManual: status.hasArchiveManual,
+        },
+      ])
+    );
+
     // Step 2: Delete existing channels (FAST, outside transaction)
     await prisma.channel.deleteMany({
       where: { playlistId },
@@ -280,6 +305,22 @@ export class PlaylistRepository {
       const data = batch.map((ch) => {
         // CRITICAL: Restore user's custom mapping if it exists for this channel
         const existingMapping = mappingMap.get(ch.streamId) || null;
+        const manualStatus = manualStatusMap.get(ch.streamId);
+        const isOperational = manualStatus?.isOperationalManual
+          ? manualStatus.isOperational
+          : true;
+        const isOperationalManual = manualStatus?.isOperationalManual ?? false;
+        const hasArchive = manualStatus?.hasArchiveManual
+          ? manualStatus.hasArchive
+          : (() => {
+              const values = [ch.tvgRec, ch.timeshift, ch.catchupDays];
+              return values.some((value) => {
+                if (value === null || value === undefined) return false;
+                const parsed = Number(value);
+                return !Number.isNaN(parsed) && parsed > 0;
+              });
+            })();
+        const hasArchiveManual = manualStatus?.hasArchiveManual ?? false;
         // Preserve provider tvgId; don't overwrite with mapping
         const finalTvgId = ch.tvgId || null;
 
@@ -307,6 +348,10 @@ export class PlaylistRepository {
           catchupCorrection: ch.catchupCorrection || null,
           xuiId: ch.xuiId || null,
           channelMapping: existingMapping, // ← CRITICAL: Restore full mapping
+          isOperational,
+          isOperationalManual,
+          hasArchive,
+          hasArchiveManual,
         };
       });
 

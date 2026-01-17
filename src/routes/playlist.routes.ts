@@ -41,9 +41,70 @@ const parsePlaylist = (playlist: Playlist): any => {
   return parsed;
 };
 
+const pruneExcludedChannels = async (
+  playlistId: number,
+  excludedChannels: string[]
+): Promise<string[]> => {
+  if (!excludedChannels.length) return excludedChannels;
+  const existing = await prisma.channel.findMany({
+    where: { playlistId, streamId: { in: excludedChannels } },
+    select: { streamId: true },
+  });
+  const existingSet = new Set(existing.map((ch) => ch.streamId));
+  const pruned = excludedChannels.filter((id) => existingSet.has(id));
+  if (pruned.length !== excludedChannels.length) {
+    await prisma.playlist.update({
+      where: { id: playlistId },
+      data: { excludedChannels: JSON.stringify(pruned) },
+    });
+  }
+  return pruned;
+};
+
+const normalizeLineupName = (name: string) =>
+  name.trim().toLowerCase().replace(/\s+/g, " ");
+
+const resolveLineupFileIds = async (playlist: Playlist, userId: number) => {
+  if (playlist.epgGroupId) {
+    const groupFiles = await prisma.epgFile.findMany({
+      where: { epgGroupId: playlist.epgGroupId, userId },
+      select: { id: true },
+    });
+    return groupFiles.map((file) => file.id);
+  }
+
+  if (playlist.epgFileId) {
+    return [playlist.epgFileId];
+  }
+
+  const defaultEpgFile = await prisma.epgFile.findFirst({
+    where: { userId, isDefault: true },
+    select: { id: true },
+  });
+  if (defaultEpgFile) {
+    return [defaultEpgFile.id];
+  }
+
+  const defaultEpgGroup = await prisma.epgGroup.findFirst({
+    where: { userId, isDefault: true },
+    select: { id: true },
+  });
+  if (!defaultEpgGroup) return [];
+
+  const groupFiles = await prisma.epgFile.findMany({
+    where: { epgGroupId: defaultEpgGroup.id, userId },
+    select: { id: true },
+  });
+  return groupFiles.map((file) => file.id);
+};
+
 // Helper function to sort channels: mapped channels first (by lineup order), then unmapped
 // Optimized to only load lineup data when there are mapped channels
-const sortChannelsByMapping = async (channels: any[]): Promise<any[]> => {
+const sortChannelsByMapping = async (
+  channels: any[],
+  playlist?: Playlist,
+  userId?: number
+): Promise<any[]> => {
   // Quick check: if no channels have mapping, return as-is (already sorted by name)
   const hasMappedChannels = channels.some((ch) => ch.channelMapping);
   if (!hasMappedChannels) {
@@ -53,32 +114,21 @@ const sortChannelsByMapping = async (channels: any[]): Promise<any[]> => {
   // Get all channel lineup entries with their sortOrder (cached for session)
   const lineupMap = new Map<string, number>();
   try {
-    // Only fetch unique names that are actually mapped
-    const mappedNames = new Set<string>();
-    channels.forEach((channel) => {
-      if (channel.channelMapping) {
-        try {
-          const mapping = JSON.parse(channel.channelMapping);
-          if (mapping.name) {
-            mappedNames.add(mapping.name);
-          }
-        } catch (e) {
-          // Invalid JSON, skip
-        }
-      }
-    });
-
-    // Fetch only the lineup entries we need
-    if (mappedNames.size > 0) {
+    if (playlist && userId) {
+      const epgFileIds = await resolveLineupFileIds(playlist, userId);
       const lineupChannels = await prisma.channelLineup.findMany({
         where: {
-          name: { in: Array.from(mappedNames) },
+          userId,
+          ...(epgFileIds.length > 0 ? { epgFileId: { in: epgFileIds } } : {}),
         },
         select: { name: true, sortOrder: true },
       });
-
       lineupChannels.forEach((ch) => {
-        lineupMap.set(ch.name, ch.sortOrder);
+        const key = normalizeLineupName(ch.name);
+        const existing = lineupMap.get(key);
+        if (existing === undefined || ch.sortOrder < existing) {
+          lineupMap.set(key, ch.sortOrder);
+        }
       });
     }
   } catch (e) {
@@ -86,7 +136,12 @@ const sortChannelsByMapping = async (channels: any[]): Promise<any[]> => {
   }
 
   // Separate mapped and unmapped channels
-  const mapped: Array<{ channel: any; sortOrder: number }> = [];
+  const mapped: Array<{
+    channel: any;
+    sortOrder: number;
+    mappedName: string;
+    isOperational: boolean;
+  }> = [];
   const unmapped: any[] = [];
 
   channels.forEach((channel) => {
@@ -94,8 +149,10 @@ const sortChannelsByMapping = async (channels: any[]): Promise<any[]> => {
       try {
         const mapping = JSON.parse(channel.channelMapping);
         const mappedName = mapping.name;
-        const sortOrder = lineupMap.get(mappedName) ?? 999999;
-        mapped.push({ channel, sortOrder });
+        const normalizedName = normalizeLineupName(String(mappedName || ""));
+        const sortOrder = lineupMap.get(normalizedName) ?? 999999;
+        const isOperational = channel.isOperational !== false;
+        mapped.push({ channel, sortOrder, mappedName, isOperational });
       } catch (e) {
         // If mapping is invalid, treat as unmapped
         unmapped.push(channel);
@@ -106,7 +163,19 @@ const sortChannelsByMapping = async (channels: any[]): Promise<any[]> => {
   });
 
   // Sort mapped channels by their lineup sortOrder
-  mapped.sort((a, b) => a.sortOrder - b.sortOrder);
+  mapped.sort((a, b) => {
+    if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+    const aName = normalizeLineupName(a.mappedName || "");
+    const bName = normalizeLineupName(b.mappedName || "");
+    if (aName !== bName) return aName.localeCompare(bName);
+    if (a.isOperational !== b.isOperational) {
+      return a.isOperational ? -1 : 1;
+    }
+    if (a.channel.hasArchive !== b.channel.hasArchive) {
+      return a.channel.hasArchive ? -1 : 1;
+    }
+    return 0;
+  });
 
   // Combine: mapped first, then unmapped
   return [...mapped.map((m) => m.channel), ...unmapped];
@@ -187,6 +256,12 @@ router.get("/:id", async (req: Request, res: Response) => {
     }
 
     const parsed = parsePlaylist(playlist);
+    if (Array.isArray(parsed.excludedChannels) && parsed.excludedChannels.length) {
+      parsed.excludedChannels = await pruneExcludedChannels(
+        id,
+        parsed.excludedChannels
+      );
+    }
     res.json({
       ...parsed,
       channelCount: await PlaylistRepository.getChannelCount(id),
@@ -698,6 +773,7 @@ router.get("/:id/channels", async (req: Request, res: Response) => {
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 1000; // Default 1000 per page
     const skipPagination = req.query.skipPagination === "true";
+    const includeExcluded = req.query.includeExcluded === "true";
 
     console.log("=".repeat(80));
     console.log(`[API] GET /api/playlists/${id}/channels`);
@@ -709,6 +785,7 @@ router.get("/:id/channels", async (req: Request, res: Response) => {
       page,
       limit,
       skipPagination,
+      includeExcluded,
     });
 
     let channels;
@@ -745,7 +822,7 @@ router.get("/:id/channels", async (req: Request, res: Response) => {
 
     const filterConfig = {
       hiddenCategories: hiddenCategoryIds,
-      excludedChannels: excludedChannelIds,
+      excludedChannels: includeExcluded ? [] : excludedChannelIds,
       includeUncategorized,
       selectedCategoryIds,
     };
@@ -801,7 +878,11 @@ router.get("/:id/channels", async (req: Request, res: Response) => {
 
     // Sort channels: mapped first (by lineup order), then unmapped
     const sortStart = Date.now();
-    const sortedChannels = await sortChannelsByMapping(channels);
+    const sortedChannels = await sortChannelsByMapping(
+      channels,
+      playlist,
+      userId
+    );
     console.log(`[API] Sorting completed in ${Date.now() - sortStart}ms`);
 
     const totalTime = Date.now() - startTime;
@@ -880,7 +961,7 @@ router.get("/:id/export", async (req: Request, res: Response) => {
     );
 
     // Sort channels: mapped first (by lineup order), then unmapped
-    channels = await sortChannelsByMapping(channels);
+    channels = await sortChannelsByMapping(channels, playlist, userId);
 
     // Get EPG URL: playlist-specific EPG/Group or user's default EPG
     let epgUrl: string | undefined;
@@ -965,7 +1046,7 @@ router.post("/:id/export-custom", async (req: Request, res: Response) => {
     }
 
     // Sort channels: mapped first (by lineup order), then unmapped
-    channels = await sortChannelsByMapping(channels);
+    channels = await sortChannelsByMapping(channels, playlist, userId);
 
     // Get EPG URL: playlist-specific EPG/Group or user's default EPG
     let epgUrl: string | undefined;
@@ -1025,7 +1106,7 @@ router.get("/:id/export-json", async (req: Request, res: Response) => {
     let channels = await PlaylistRepository.getChannels(id);
 
     // Sort channels: mapped first (by lineup order), then unmapped
-    channels = await sortChannelsByMapping(channels);
+    channels = await sortChannelsByMapping(channels, playlist, userId);
 
     const jsonContent = ExportService.generateJSON(
       channels as any,
@@ -1086,7 +1167,7 @@ router.post("/:id/export-json-custom", async (req: Request, res: Response) => {
     }
 
     // Sort channels: mapped first (by lineup order), then unmapped
-    channels = await sortChannelsByMapping(channels);
+    channels = await sortChannelsByMapping(channels, playlist, userId);
 
     const jsonContent = ExportService.generateJSON(
       channels as any,
@@ -1687,6 +1768,56 @@ router.delete(
         data: {
           channelMapping: null,
         },
+      });
+
+      if (result.count === 0) {
+        return res.status(404).json({ error: "Channel not found" });
+      }
+
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+/**
+ * PUT /api/playlists/:id/channels/:streamId/flags - Update channel status flags
+ */
+router.put(
+  "/:id/channels/:streamId/flags",
+  async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).session.user.id;
+      const playlistId = parseInt(req.params.id);
+      const { streamId } = req.params;
+      const { isOperational, hasArchive } = req.body;
+
+      const playlist = await PlaylistRepository.findById(playlistId, userId);
+      if (!playlist) {
+        return res.status(404).json({ error: "Playlist not found" });
+      }
+
+      const data: any = {};
+      if (isOperational !== undefined) {
+        data.isOperational = !!isOperational;
+        data.isOperationalManual = true;
+      }
+      if (hasArchive !== undefined) {
+        data.hasArchive = !!hasArchive;
+        data.hasArchiveManual = true;
+      }
+
+      if (Object.keys(data).length === 0) {
+        return res.status(400).json({ error: "No flags provided" });
+      }
+
+      const result = await prisma.channel.updateMany({
+        where: {
+          playlistId,
+          streamId,
+        },
+        data,
       });
 
       if (result.count === 0) {

@@ -155,8 +155,16 @@ function PlaylistEditModal({ playlist, onClose, onSave }: Props) {
   const loadChannels = async () => {
     try {
       setLoadingChannels(true);
-      const data = await api.getChannels(playlist.id!);
-      setChannels(data);
+      const [channelsData, playlistData] = await Promise.all([
+        api.getChannels(playlist.id!, undefined, undefined, {
+          includeExcluded: true,
+        }),
+        api.getPlaylist(playlist.id!),
+      ]);
+      setChannels(channelsData);
+      if (Array.isArray(playlistData.excludedChannels)) {
+        setExcludedChannels(new Set(playlistData.excludedChannels));
+      }
     } catch (err: any) {
       setError("Failed to load channels");
     } finally {

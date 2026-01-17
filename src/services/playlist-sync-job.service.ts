@@ -73,6 +73,25 @@ export class PlaylistSyncJobService {
     }
   }
 
+  private static getArchiveEnabled(channel: Channel): boolean {
+    const values = [channel.tvgRec, channel.timeshift, channel.catchupDays];
+    return values.some((value) => {
+      if (value === null || value === undefined) return false;
+      const parsed = Number(value);
+      return !Number.isNaN(parsed) && parsed > 0;
+    });
+  }
+
+  private static parseExcludedChannels(raw: string | null): string[] {
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
   /**
    * Process sync job in chunks to keep each polling request short
    */
@@ -293,6 +312,15 @@ export class PlaylistSyncJobService {
     // CRITICAL: Preserve user mappings before deleting channels
     // Only do this on first batch
     let mappingMap = new Map<string, string>();
+    let manualStatusMap = new Map<
+      string,
+      {
+        isOperational: boolean;
+        isOperationalManual: boolean;
+        hasArchive: boolean;
+        hasArchiveManual: boolean;
+      }
+    >();
     if (startIndex === 0) {
       console.log(
         `[Sync Job ${jobId}] Fetching existing channel mappings...`
@@ -313,6 +341,31 @@ export class PlaylistSyncJobService {
       );
       console.log(
         `[Sync Job ${jobId}] Found ${mappingMap.size} existing mappings to preserve`
+      );
+
+      const manualStatuses = await prisma.channel.findMany({
+        where: {
+          playlistId: job.playlistId,
+          OR: [{ isOperationalManual: true }, { hasArchiveManual: true }],
+        },
+        select: {
+          streamId: true,
+          isOperational: true,
+          isOperationalManual: true,
+          hasArchive: true,
+          hasArchiveManual: true,
+        },
+      });
+      manualStatusMap = new Map(
+        manualStatuses.map((status) => [
+          status.streamId,
+          {
+            isOperational: status.isOperational,
+            isOperationalManual: status.isOperationalManual,
+            hasArchive: status.hasArchive,
+            hasArchiveManual: status.hasArchiveManual,
+          },
+        ])
       );
 
       // Delete old channels
@@ -353,6 +406,15 @@ export class PlaylistSyncJobService {
         data: batch.map((ch) => {
           // CRITICAL: Restore user's custom mapping if it exists
           const existingMapping = mappingMap.get(ch.streamId) || null;
+          const manualStatus = manualStatusMap.get(ch.streamId);
+          const isOperational = manualStatus?.isOperationalManual
+            ? manualStatus.isOperational
+            : true;
+          const isOperationalManual = manualStatus?.isOperationalManual ?? false;
+          const hasArchive = manualStatus?.hasArchiveManual
+            ? manualStatus.hasArchive
+            : this.getArchiveEnabled(ch);
+          const hasArchiveManual = manualStatus?.hasArchiveManual ?? false;
           // Preserve provider tvgId; don't overwrite with mapping
           const finalTvgId = ch.tvgId || null;
 
@@ -380,6 +442,10 @@ export class PlaylistSyncJobService {
             catchupCorrection: ch.catchupCorrection || null,
             xuiId: ch.xuiId || null,
             channelMapping: existingMapping,
+            isOperational,
+            isOperationalManual,
+            hasArchive,
+            hasArchiveManual,
           };
         }),
       });
@@ -420,10 +486,45 @@ export class PlaylistSyncJobService {
       },
     });
 
-    // Update playlist lastSyncedAt
+    const shouldPruneExcluded =
+      !job.categoryFilters ||
+      (() => {
+        try {
+          const parsed = JSON.parse(job.categoryFilters);
+          return !Array.isArray(parsed) || parsed.length === 0;
+        } catch {
+          return true;
+        }
+      })();
+
+    let excludedChannelsUpdate: string | undefined;
+    if (shouldPruneExcluded) {
+      const playlistSnapshot = await prisma.playlist.findUnique({
+        where: { id: job.playlistId },
+        select: { excludedChannels: true },
+      });
+      const currentExcluded = this.parseExcludedChannels(
+        playlistSnapshot?.excludedChannels ?? null
+      );
+      if (currentExcluded.length > 0) {
+        const channelIds = new Set(channels.map((ch) => ch.streamId));
+        const pruned = currentExcluded.filter((id) => channelIds.has(id));
+        if (pruned.length !== currentExcluded.length) {
+          excludedChannelsUpdate = JSON.stringify(pruned);
+        }
+      }
+    }
+
+    // Update playlist lastSyncedAt (and prune excluded channels when needed)
     const playlist = await prisma.playlist.update({
       where: { id: job.playlistId },
-      data: { lastSyncedAt: new Date(), lastChannelsSyncedAt: new Date() },
+      data: {
+        lastSyncedAt: new Date(),
+        lastChannelsSyncedAt: new Date(),
+        ...(excludedChannelsUpdate !== undefined
+          ? { excludedChannels: excludedChannelsUpdate }
+          : {}),
+      },
       select: { id: true, name: true, userId: true },
     });
 
