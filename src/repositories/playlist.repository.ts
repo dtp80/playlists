@@ -346,6 +346,7 @@ export class PlaylistRepository {
           catchupDays: ch.catchupDays || null,
           catchupSource: ch.catchupSource || null,
           catchupCorrection: ch.catchupCorrection || null,
+          cuid: ch.cuid || null,
           xuiId: ch.xuiId || null,
           channelMapping: existingMapping, // ← CRITICAL: Restore full mapping
           isOperational,

@@ -951,6 +951,7 @@ function PlaylistEditModal({ playlist, onClose, onSave }: Props) {
                     <option value="catchup-correction">
                       catchup-correction
                     </option>
+                    <option value="cuid">cuid</option>
                     <option value="xui-id">xui-id</option>
                   </select>
                   <small className="form-hint">

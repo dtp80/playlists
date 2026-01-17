@@ -76,7 +76,7 @@ function ChannelList({
     try {
       // Extract from metadata tag
       if (identifierSource === "metadata") {
-        const key = identifierMetadataKey || "tvg-id";
+        const key = (identifierMetadataKey || "tvg-id").toLowerCase();
         switch (key) {
           case "tvg-id":
             return channel.tvgId || channel.name;
@@ -100,6 +100,8 @@ function ChannelList({
             return channel.catchupSource || channel.name;
           case "catchup-correction":
             return channel.catchupCorrection || channel.name;
+          case "cuid":
+            return channel.cuid || channel.name;
           case "xui-id":
             return channel.xuiId || channel.streamId;
           default:

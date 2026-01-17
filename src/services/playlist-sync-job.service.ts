@@ -155,6 +155,9 @@ export class PlaylistSyncJobService {
             }
           }
 
+          const forceM3U =
+            playlist.identifierSource === "metadata" &&
+            (playlist.identifierMetadataKey || "").toLowerCase() === "cuid";
           const result = await XtreamService.syncPlaylist(
             job.playlistId,
             {
@@ -162,7 +165,8 @@ export class PlaylistSyncJobService {
               username: playlist.username,
               password: playlist.password,
             },
-            selectedCategories
+            selectedCategories,
+            { forceM3U }
           );
 
           categories = result.categories;
@@ -245,11 +249,19 @@ export class PlaylistSyncJobService {
           }
 
           if (playlist.type === "xtream") {
-            const result = await XtreamService.syncPlaylist(job.playlistId, {
-              url: playlist.url,
-              username: playlist.username!,
-              password: playlist.password!,
-            });
+            const forceM3U =
+              playlist.identifierSource === "metadata" &&
+              (playlist.identifierMetadataKey || "").toLowerCase() === "cuid";
+            const result = await XtreamService.syncPlaylist(
+              job.playlistId,
+              {
+                url: playlist.url,
+                username: playlist.username!,
+                password: playlist.password!,
+              },
+              undefined,
+              { forceM3U }
+            );
             channels = result.channels;
           } else {
             const result = await M3UService.syncPlaylist(

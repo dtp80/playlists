@@ -121,6 +121,7 @@ export interface Channel {
   catchupDays?: string;
   catchupSource?: string;
   catchupCorrection?: string;
+  cuid?: string;
   xuiId?: string;
   channelMapping?: string; // JSON: { name: string, logo: string }
   isOperational?: boolean;

@@ -223,7 +223,7 @@ export class ImportJobService {
       const extractIdentifier = (channel: any): string => {
         const source = playlist.identifierSource || "channel-name";
         const regex = playlist.identifierRegex;
-        const metadataKey = playlist.identifierMetadataKey;
+        const metadataKey = playlist.identifierMetadataKey?.toLowerCase();
 
         if (source === "stream-url" && regex && channel.streamUrl) {
           const match = channel.streamUrl.match(new RegExp(regex));
@@ -239,9 +239,10 @@ export class ImportJobService {
             "catchup-days": "catchupDays",
             "catchup-source": "catchupSource",
             "catchup-correction": "catchupCorrection",
+            cuid: "cuid",
             "xui-id": "xuiId",
           };
-          const actualKey = keyMap[metadataKey] || metadataKey;
+          const actualKey = (metadataKey && keyMap[metadataKey]) || metadataKey;
           return channel[actualKey] || channel.streamId;
         } else if (source === "channel-name" && regex && channel.name) {
           const match = channel.name.match(new RegExp(regex));

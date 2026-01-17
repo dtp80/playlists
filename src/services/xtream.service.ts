@@ -355,6 +355,7 @@ export class XtreamService {
       catchupDays: fallbackCatchupDays,
       catchupSource: m3uChannel?.catchupSource || null,
       catchupCorrection: m3uChannel?.catchupCorrection || null,
+      cuid: m3uChannel?.cuid || null,
       // For Xtream, xui-id from M3U takes priority, then API xui_id, then stream_id
       xuiId:
         m3uChannel?.xuiId ||
@@ -386,7 +387,8 @@ export class XtreamService {
   static async syncPlaylist(
     playlistId: number,
     credentials: XtreamCredentials,
-    categoryFilters?: string[]
+    categoryFilters?: string[],
+    options?: { forceM3U?: boolean }
   ): Promise<{
     categories: Category[];
     allCategories: Category[];
@@ -421,7 +423,8 @@ export class XtreamService {
     // Use short timeout to avoid delaying sync - this is optional metadata.
     // For very large providers, skip M3U enrichment to reduce load/timeout risk.
     let m3uData = new Map<string, any>();
-    const skipM3U = xtreamCategories.length > 200; // heuristic for very large providers
+    const skipM3U =
+      !options?.forceM3U && xtreamCategories.length > 200; // heuristic for very large providers
     if (!skipM3U) {
       if (await isDebugMode()) {
         console.log("Fetching M3U playlist for enhanced metadata...");

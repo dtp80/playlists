@@ -91,6 +91,7 @@ model Channel {
   catchupDays       String?
   catchupSource     String?
   catchupCorrection String?
+  cuid              String?
   xuiId             String?
   channelMapping    String?
   isOperational     Boolean @default(true)

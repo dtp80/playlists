@@ -16,6 +16,7 @@ interface M3UChannelInfo {
   catchupDays?: string;
   catchupSource?: string;
   catchupCorrection?: string;
+  cuid?: string;
   xuiId?: string;
 }
 
@@ -56,6 +57,7 @@ export class M3UService {
         const catchupCorrectionMatch = line.match(
           /\bcatchup-correction="([^"]*)"/
         );
+        const cuidMatch = line.match(/\bCUID="([^"]*)"/i);
         const xuiIdMatch = line.match(/\bxui-id="([^"]*)"/);
 
         // Extract channel name (after the last comma)
@@ -76,6 +78,7 @@ export class M3UService {
           catchupCorrection: catchupCorrectionMatch
             ? catchupCorrectionMatch[1]
             : undefined,
+          cuid: cuidMatch ? cuidMatch[1] : undefined,
           xuiId: xuiIdMatch ? xuiIdMatch[1] : undefined,
           name: nameMatch ? nameMatch[1].trim() : "Unknown Channel",
         };
@@ -153,6 +156,7 @@ export class M3UService {
       catchupDays: m3uChannel.catchupDays || null,
       catchupSource: m3uChannel.catchupSource || null,
       catchupCorrection: m3uChannel.catchupCorrection || null,
+      cuid: m3uChannel.cuid || null,
       xuiId: m3uChannel.xuiId || null,
     } as any;
   }
