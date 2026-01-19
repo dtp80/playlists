@@ -609,7 +609,32 @@ router.get("/:id/sync/job/:jobId", async (req: Request, res: Response) => {
       job = await PlaylistSyncJobService.getJobStatus(jobId);
     }
 
-    res.json(job);
+    if (!job) {
+      return res.status(404).json({ error: "Sync job not found" });
+    }
+
+    const parseList = (raw?: string | null) => {
+      if (!raw) return [];
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    };
+
+    const addedChannels = parseList(job.addedChannels);
+    const removedChannels = parseList(job.removedChannels);
+
+    res.json({
+      ...job,
+      summary: {
+        addedCount: addedChannels.length,
+        removedCount: removedChannels.length,
+        addedChannels,
+        removedChannels,
+      },
+    });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

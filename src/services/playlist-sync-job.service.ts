@@ -478,6 +478,13 @@ export class PlaylistSyncJobService {
 
     // All done!
     console.log(`[Sync Job ${jobId}] All channels saved successfully`);
+
+    const addedChannels = job.channelsData
+      ? this.diffAdded(channels, job.channelsData)
+      : [];
+    const removedChannels = job.channelsData
+      ? this.diffRemoved(channels, job.channelsData)
+      : [];
     
     // CRITICAL: Update database statistics after bulk insert
     // This helps PostgreSQL query planner use indexes efficiently
@@ -492,6 +499,10 @@ export class PlaylistSyncJobService {
         progress: 100,
         savedChannels: channels.length,
         message: `Sync completed: ${channels.length} channels saved`,
+        addedChannels:
+          addedChannels.length > 0 ? JSON.stringify(addedChannels) : null,
+        removedChannels:
+          removedChannels.length > 0 ? JSON.stringify(removedChannels) : null,
         channelsData: null,
         categoriesData: null,
         updatedAt: new Date(),
@@ -548,12 +559,8 @@ export class PlaylistSyncJobService {
         playlistId: playlist.id,
         totalCategories: job.totalCategories || 0,
         totalChannels: job.totalChannels || channels.length,
-        addedChannels: job.channelsData
-          ? this.diffAdded(channels, job.channelsData)
-          : [],
-        removedChannels: job.channelsData
-          ? this.diffRemoved(channels, job.channelsData)
-          : [],
+        addedChannels,
+        removedChannels,
       });
     } catch (err) {
       console.warn(`[Sync Job ${jobId}] Telegram summary failed`, err);

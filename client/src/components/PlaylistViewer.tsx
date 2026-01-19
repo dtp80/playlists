@@ -24,6 +24,12 @@ function PlaylistViewer({ playlist, onSync, onEditPlaylist }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [cooldownMessage, setCooldownMessage] = useState<string | null>(null);
+  const [syncSummary, setSyncSummary] = useState<{
+    addedChannels: Array<{ name: string; streamId: string }>;
+    removedChannels: Array<{ name: string; streamId: string }>;
+    addedCount: number;
+    removedCount: number;
+  } | null>(null);
 
   // Import progress state
   const [importing, setImporting] = useState(false);
@@ -141,6 +147,53 @@ function PlaylistViewer({ playlist, onSync, onEditPlaylist }: Props) {
 
     // For older dates, show the date
     return date.toLocaleDateString();
+  };
+
+  const buildSyncSummaryMessage = (summary: {
+    addedChannels: Array<{ name: string }>;
+    removedChannels: Array<{ name: string }>;
+    addedCount: number;
+    removedCount: number;
+  }) => {
+    const lines: string[] = [
+      `Added: ${summary.addedCount}`,
+      `Removed: ${summary.removedCount}`,
+    ];
+
+    if (summary.addedChannels.length > 0) {
+      lines.push("", "Added channels:");
+      summary.addedChannels.slice(0, 20).forEach((ch) => {
+        lines.push(`+ ${ch.name}`);
+      });
+      if (summary.addedCount > 20) {
+        lines.push(`... and ${summary.addedCount - 20} more`);
+      }
+    }
+
+    if (summary.removedChannels.length > 0) {
+      lines.push("", "Removed channels:");
+      summary.removedChannels.slice(0, 20).forEach((ch) => {
+        lines.push(`- ${ch.name}`);
+      });
+      if (summary.removedCount > 20) {
+        lines.push(`... and ${summary.removedCount - 20} more`);
+      }
+    }
+
+    return lines.join("\n");
+  };
+
+  const handleSyncSummaryOk = async () => {
+    try {
+      justSyncedRef.current = false;
+      await loadData();
+      await loadChannels(1);
+      const freshPlaylist = await api.getPlaylist(playlist.id!);
+      setLocalPlaylist(freshPlaylist);
+      onSync();
+    } catch (err) {
+      console.error("Failed to refresh after sync summary:", err);
+    }
   };
 
   // Get per-playlist sync cooldown key
@@ -679,6 +732,15 @@ function PlaylistViewer({ playlist, onSync, onEditPlaylist }: Props) {
               setSyncMessage(null);
               setSyncProgress(0);
               setSyncing(false); // Unblock user interaction
+
+              if (job.summary) {
+                setSyncSummary({
+                  addedChannels: job.summary.addedChannels || [],
+                  removedChannels: job.summary.removedChannels || [],
+                  addedCount: job.summary.addedCount || 0,
+                  removedCount: job.summary.removedCount || 0,
+                });
+              }
 
               console.log("✅ User interaction enabled");
               console.log("✅ Sync sequence complete - UI showing final state");
@@ -2025,6 +2087,17 @@ function PlaylistViewer({ playlist, onSync, onEditPlaylist }: Props) {
           confirmVariant={confirmModal.confirmVariant}
           onConfirm={confirmModal.onConfirm}
           onCancel={() => setConfirmModal(null)}
+        />
+      )}
+
+      {syncSummary && (
+        <ConfirmModal
+          title="Sync Summary"
+          message={buildSyncSummaryMessage(syncSummary)}
+          confirmText="OK"
+          confirmVariant="success"
+          onConfirm={handleSyncSummaryOk}
+          onCancel={() => setSyncSummary(null)}
         />
       )}
 

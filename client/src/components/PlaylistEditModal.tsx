@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Playlist, Category, Channel, EpgFile, EpgGroup } from "../types";
 import { api } from "../api";
 import "./PlaylistEditModal.css";
@@ -55,6 +55,7 @@ function PlaylistEditModal({ playlist, onClose, onSave }: Props) {
   const [includeUncategorized, setIncludeUncategorized] = useState(
     playlist.includeUncategorizedChannels !== false
   );
+  const modalBodyRef = useRef<HTMLDivElement | null>(null);
 
   // Regex generator states
   const [sampleUrl, setSampleUrl] = useState("");
@@ -288,9 +289,21 @@ function PlaylistEditModal({ playlist, onClose, onSave }: Props) {
     }
   };
 
+  const handleModalWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    const body = modalBodyRef.current;
+    if (!body) return;
+    if (body.scrollHeight <= body.clientHeight) return;
+    body.scrollTop += e.deltaY;
+    e.preventDefault();
+  };
+
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal-content"
+        onClick={(e) => e.stopPropagation()}
+        onWheel={handleModalWheel}
+      >
         <div className="modal-header">
           <h2>✏️ Edit Playlist</h2>
           <button className="modal-close" onClick={onClose}>
@@ -327,7 +340,7 @@ function PlaylistEditModal({ playlist, onClose, onSave }: Props) {
           </button>
         </div>
 
-        <div className="modal-body">
+        <div className="modal-body" ref={modalBodyRef}>
           {error && <div className="error-message">{error}</div>}
 
           {activeTab === "general" && (

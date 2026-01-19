@@ -139,6 +139,8 @@ export class PlaylistRepository {
     const selectionMap = new Map(
       existing.map((c) => [c.categoryId, c.isSelected || 0])
     );
+    const allSelectedPreviously =
+      existing.length > 0 && existing.every((c) => (c.isSelected || 0) === 1);
 
     // Build final category set
     const categoryMap = new Map<string, Category & { isSelected?: number }>();
@@ -156,12 +158,13 @@ export class PlaylistRepository {
     }
 
     categories.forEach((cat) => {
+      const defaultSelection = allSelectedPreviously ? 1 : 0;
       categoryMap.set(cat.categoryId, {
         playlistId: cat.playlistId,
         categoryId: cat.categoryId,
         categoryName: cat.categoryName,
         parentId: cat.parentId || null,
-        isSelected: selectionMap.get(cat.categoryId) ?? 0,
+        isSelected: selectionMap.get(cat.categoryId) ?? defaultSelection,
       } as any);
     });
 

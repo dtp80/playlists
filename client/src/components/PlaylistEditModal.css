@@ -95,6 +95,8 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 1.5rem;
+  min-height: 0;
+  -webkit-overflow-scrolling: touch;
 }
 
 .tab-content {

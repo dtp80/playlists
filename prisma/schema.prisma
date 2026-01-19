@@ -256,6 +256,8 @@ model PlaylistSyncJob {
   savedChannels   Int      @default(0)
   channelsData    String?  // JSON string of fetched channels to avoid refetch on resume
   categoriesData  String?  // JSON string of fetched categories (for debugging/restore)
+  addedChannels   String?  // JSON array of channels added since last sync
+  removedChannels String?  // JSON array of channels removed since last sync
   categoryFilters String?  // JSON array of categoryIds to fetch (Xtream)
   error           String?
   createdAt       DateTime @default(now())
