@@ -36,6 +36,12 @@ function PlaylistViewer({ playlist, onSync, onEditPlaylist }: Props) {
   const [importProgress, setImportProgress] = useState(0);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
+  const [operationalFilter, setOperationalFilter] = useState<
+    "all" | "on" | "off"
+  >("all");
+  const [archiveFilter, setArchiveFilter] = useState<"all" | "on" | "off">(
+    "all"
+  );
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showImportMenu, setShowImportMenu] = useState(false);
   const [showPlaylistSelectionModal, setShowPlaylistSelectionModal] =
@@ -237,6 +243,8 @@ function PlaylistViewer({ playlist, onSync, onEditPlaylist }: Props) {
     playlist.hiddenCategories,
     playlist.excludedChannels,
     mappingFilter,
+    operationalFilter,
+    archiveFilter,
   ]);
 
   // Close export menu on Escape key
@@ -486,6 +494,24 @@ function PlaylistViewer({ playlist, onSync, onEditPlaylist }: Props) {
         console.log(
           `🔍 Mapping filter (unmapped only): ${beforeMappingFilter} → ${visibleChannels.length} channels`
         );
+      }
+
+      // Apply operational filter
+      if (operationalFilter === "on") {
+        visibleChannels = visibleChannels.filter(
+          (channel) => channel.isOperational !== false
+        );
+      } else if (operationalFilter === "off") {
+        visibleChannels = visibleChannels.filter(
+          (channel) => channel.isOperational === false
+        );
+      }
+
+      // Apply archive filter
+      if (archiveFilter === "on") {
+        visibleChannels = visibleChannels.filter((channel) => channel.hasArchive);
+      } else if (archiveFilter === "off") {
+        visibleChannels = visibleChannels.filter((channel) => !channel.hasArchive);
       }
 
       // Apply pagination if needed
@@ -1763,6 +1789,53 @@ function PlaylistViewer({ playlist, onSync, onEditPlaylist }: Props) {
               <line x1="3" y1="15" x2="21" y2="15" />
               <rect x="3" y="3" width="18" height="18" />
             </svg>
+          </button>
+        </div>
+
+        <div className="status-filter-toggle">
+          <button
+            className={`status-filter-btn ${
+              operationalFilter !== "all" ? "active" : ""
+            }`}
+            onClick={() =>
+              setOperationalFilter((prev) =>
+                prev === "all" ? "on" : prev === "on" ? "off" : "all"
+              )
+            }
+            title="Operational filter: All → Operational → Not operational"
+            aria-label="Operational filter"
+          >
+            <span
+              className={`status-filter-indicator status-filter-indicator--${operationalFilter}`}
+            />
+          </button>
+          <button
+            className={`status-filter-btn ${
+              archiveFilter !== "all" ? "active" : ""
+            }`}
+            onClick={() =>
+              setArchiveFilter((prev) =>
+                prev === "all" ? "on" : prev === "on" ? "off" : "all"
+              )
+            }
+            title="Archive filter: All → Enabled → Disabled"
+            aria-label="Archive filter"
+          >
+            <span
+              className={`archive-filter-indicator archive-filter-indicator--${archiveFilter}`}
+            >
+              <svg
+                className="archive-filter-icon"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path
+                  d="M4 3h16a1 1 0 0 1 1 1v3H3V4a1 1 0 0 1 1-1Zm-1 6h18v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9Zm6 3a1 1 0 0 0 0 2h6a1 1 0 0 0 0-2H9Z"
+                  fill="currentColor"
+                />
+              </svg>
+            </span>
           </button>
         </div>
 
