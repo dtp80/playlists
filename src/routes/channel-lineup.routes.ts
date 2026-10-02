@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import prisma, { isDebugMode, getSyncTimeout } from "../database/prisma";
+import { routeParam, routeParamInt } from "../utils/route-params";
 
 const router = Router();
 
@@ -301,7 +302,7 @@ router.put("/reorder", async (req: Request, res: Response) => {
 router.put("/:id", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const id = parseInt(req.params.id);
+    const id = routeParamInt(req.params.id);
     const { name, tvgLogo, tvgId, extGrp } = req.body;
 
     if (!name) {
@@ -344,7 +345,7 @@ router.put("/:id", async (req: Request, res: Response) => {
 router.delete("/:id", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const id = parseInt(req.params.id);
+    const id = routeParamInt(req.params.id);
 
     try {
       // Verify channel belongs to user, then delete

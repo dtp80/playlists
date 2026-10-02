@@ -1,5 +1,5 @@
 import prisma, { getSyncTimeout } from "../database/prisma";
-import { Playlist, Channel, Category } from "@prisma/client";
+import { Playlist, Channel, Category } from "../generated/prisma/client";
 
 export class PlaylistRepository {
   /**

@@ -10,7 +10,7 @@ A local-only IPTV playlist manager for desktop use (Mac/Windows/Linux). Runs ent
 
 ## Prerequisites
 
-- Node.js 20+ and npm: https://nodejs.org/en/download
+- Node.js 24+ and pnpm: https://nodejs.org/en/download
 - Git: https://git-scm.com/install
 
 ## Quick Start (Mac/Windows/Linux) from a terminal session
@@ -25,7 +25,7 @@ A local-only IPTV playlist manager for desktop use (Mac/Windows/Linux). Runs ent
 2. **Install dependencies (backend & frontend)**
 
    ```bash
-   npm run setup
+   pnpm setup
    ```
 
 3. **Create your local env file**

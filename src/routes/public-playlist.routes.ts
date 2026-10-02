@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { prisma } from "../database/prisma";
 import { ExportService } from "../services/export.service";
+import { routeParam } from "../utils/route-params";
 
 const router = Router();
 
@@ -10,7 +11,7 @@ const router = Router();
  */
 router.get("/:uniqueId", async (req: Request, res: Response) => {
   try {
-    const { uniqueId } = req.params;
+    const uniqueId = routeParam(req.params.uniqueId);
     const { u: username, p: password, t: token } = req.query;
 
     console.log(

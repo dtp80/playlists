@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import prisma from "../database/prisma";
 import { requireAdmin } from "../middleware/auth.middleware";
+import { ApiKeyService } from "../services/api-key.service";
 import axios from "axios";
 
 const router = Router();
@@ -15,6 +16,9 @@ router.get("/", async (req: Request, res: Response) => {
     // Convert to key-value object
     const settingsObj: Record<string, any> = {};
     settings.forEach((setting) => {
+      // Never expose raw API key in the general settings payload
+      if (setting.key === "apiKey") return;
+
       // Convert boolean settings
       if (setting.key === "debugMode" || setting.key === "bypass2FA") {
         settingsObj[setting.key] = setting.value === "1";
@@ -34,6 +38,56 @@ router.get("/", async (req: Request, res: Response) => {
     }
 
     res.json(settingsObj);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/settings/api-key — status (masked)
+ */
+router.get("/api-key", requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const status = await ApiKeyService.getStatus();
+    res.json(status);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/settings/api-key/generate — create & store a new key (returns plaintext once)
+ */
+router.post(
+  "/api-key/generate",
+  requireAdmin,
+  async (_req: Request, res: Response) => {
+    try {
+      const apiKey = ApiKeyService.generate();
+      await ApiKeyService.save(apiKey);
+      res.json({
+        success: true,
+        apiKey,
+        message:
+          "Store this key now. For remote/agent access, also set API_KEY in .env and restart PM2.",
+        envSnippet: `API_KEY="${apiKey}"`,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+/**
+ * DELETE /api/settings/api-key — remove DB-stored key (env key still works if set)
+ */
+router.delete("/api-key", requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    await ApiKeyService.clearStored();
+    res.json({
+      success: true,
+      envConfigured: !!ApiKeyService.getEnvApiKey(),
+    });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

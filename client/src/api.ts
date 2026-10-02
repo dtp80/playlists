@@ -343,6 +343,35 @@ export const api = {
     return response.data;
   },
 
+  getApiKeyStatus: async (): Promise<{
+    configured: boolean;
+    source: string;
+    maskedKey: string | null;
+    envConfigured: boolean;
+    databaseConfigured: boolean;
+  }> => {
+    const response = await axios.get(`${API_BASE}/settings/api-key`);
+    return response.data;
+  },
+
+  generateApiKey: async (): Promise<{
+    success: boolean;
+    apiKey: string;
+    message: string;
+    envSnippet: string;
+  }> => {
+    const response = await axios.post(`${API_BASE}/settings/api-key/generate`);
+    return response.data;
+  },
+
+  clearApiKey: async (): Promise<{
+    success: boolean;
+    envConfigured: boolean;
+  }> => {
+    const response = await axios.delete(`${API_BASE}/settings/api-key`);
+    return response.data;
+  },
+
   // Auth API
   login: async (credentials: { email: string; password: string }) => {
     const response = await axios.post(`${API_BASE}/auth/login`, credentials, {

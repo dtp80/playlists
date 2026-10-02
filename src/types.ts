@@ -7,7 +7,7 @@ export type {
   ChannelLineup,
   EpgFile,
   EpgGroup,
-} from "@prisma/client";
+} from "./generated/prisma/client";
 
 // Playlist types
 export type PlaylistType = "m3u" | "xtream";

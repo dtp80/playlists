@@ -16,7 +16,8 @@ type TabType =
   | "channels"
   | "epg"
   | "users"
-  | "schedule";
+  | "schedule"
+  | "api";
 
 interface LineupChannel {
   id: number;
@@ -78,6 +79,15 @@ function AdminModal({ onClose, onPlaylistsReordered, user }: Props) {
   const [prevTelegramSendSummaries, setPrevTelegramSendSummaries] =
     useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [apiKeyStatus, setApiKeyStatus] = useState<{
+    configured: boolean;
+    source: string;
+    maskedKey: string | null;
+    envConfigured: boolean;
+    databaseConfigured: boolean;
+  } | null>(null);
+  const [generatedApiKey, setGeneratedApiKey] = useState<string | null>(null);
+  const [apiKeyBusy, setApiKeyBusy] = useState(false);
   const [editingChannel, setEditingChannel] = useState<LineupChannel | null>(
     null
   );
@@ -190,6 +200,8 @@ function AdminModal({ onClose, onPlaylistsReordered, user }: Props) {
       initChannels();
     } else if (activeTab === "general") {
       loadSettings();
+    } else if (activeTab === "api") {
+      loadApiKeyStatus();
     } else if (activeTab === "playlists") {
       loadPlaylists();
     } else if (activeTab === "epg") {
@@ -204,15 +216,59 @@ function AdminModal({ onClose, onPlaylistsReordered, user }: Props) {
       const settings = await api.getSettings();
       setDebugMode(settings.debugMode);
       setBypass2FA(settings.bypass2FA);
-      setSyncTimeout(settings.syncTimeout || 60);
+      if (typeof (settings as any).syncTimeout === "number") {
+        setSyncTimeout((settings as any).syncTimeout);
+      }
       setTelegramBotToken(settings.telegramBotToken || "");
       setTelegramChatId(settings.telegramChatId || "");
-      setTelegramSendSummaries(Boolean(settings.telegramSendSummaries));
+      setTelegramSendSummaries(!!settings.telegramSendSummaries);
       setPrevTelegramBotToken(settings.telegramBotToken || "");
       setPrevTelegramChatId(settings.telegramChatId || "");
-      setPrevTelegramSendSummaries(Boolean(settings.telegramSendSummaries));
-    } catch (err: any) {
-      console.error("Failed to load settings:", err);
+      setPrevTelegramSendSummaries(!!settings.telegramSendSummaries);
+    } catch (error) {
+      console.error("Failed to load settings:", error);
+    }
+  };
+
+  const loadApiKeyStatus = async () => {
+    try {
+      const status = await api.getApiKeyStatus();
+      setApiKeyStatus(status);
+    } catch (error) {
+      console.error("Failed to load API key status:", error);
+    }
+  };
+
+  const handleGenerateApiKey = async () => {
+    try {
+      setApiKeyBusy(true);
+      const result = await api.generateApiKey();
+      setGeneratedApiKey(result.apiKey);
+      await loadApiKeyStatus();
+    } catch (error: any) {
+      alert(error?.response?.data?.error || "Failed to generate API key");
+    } finally {
+      setApiKeyBusy(false);
+    }
+  };
+
+  const handleClearApiKey = async () => {
+    if (
+      !confirm(
+        "Remove the database-stored API key? The .env API_KEY (if set) will keep working."
+      )
+    ) {
+      return;
+    }
+    try {
+      setApiKeyBusy(true);
+      await api.clearApiKey();
+      setGeneratedApiKey(null);
+      await loadApiKeyStatus();
+    } catch (error: any) {
+      alert(error?.response?.data?.error || "Failed to clear API key");
+    } finally {
+      setApiKeyBusy(false);
     }
   };
 
@@ -1856,6 +1912,14 @@ function AdminModal({ onClose, onPlaylistsReordered, user }: Props) {
           >
             Schedule
           </button>
+          {isAdmin && (
+            <button
+              className={`tab-btn ${activeTab === "api" ? "active" : ""}`}
+              onClick={() => setActiveTab("api")}
+            >
+              API
+            </button>
+          )}
         </div>
 
         <div className="modal-body">
@@ -3095,6 +3159,119 @@ function AdminModal({ onClose, onPlaylistsReordered, user }: Props) {
                   >
                     {savingSchedule ? "Saving..." : "Save Schedule"}
                   </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === "api" && isAdmin && (
+            <div className="tab-content">
+              <div className="settings-section">
+                <h3>API Access</h3>
+                <p className="setting-description">
+                  Generate an API key for programmatic access and remote
+                  diagnostics. Prefer setting <code>API_KEY</code> in{" "}
+                  <code>.env</code> on the Synology so access works even when
+                  the database is unavailable.
+                </p>
+
+                <div className="setting-item">
+                  <span className="setting-text">Status</span>
+                  <p className="setting-description">
+                    {apiKeyStatus?.configured
+                      ? `Configured (${apiKeyStatus.source}) — ${apiKeyStatus.maskedKey}`
+                      : "No API key configured"}
+                  </p>
+                  {apiKeyStatus?.envConfigured && (
+                    <p className="setting-description">
+                      ✅ <code>API_KEY</code> is set in the process environment.
+                    </p>
+                  )}
+                  {apiKeyStatus?.databaseConfigured && (
+                    <p className="setting-description">
+                      ✅ A key is also stored in the local settings database.
+                    </p>
+                  )}
+                </div>
+
+                {generatedApiKey && (
+                  <div className="setting-item">
+                    <span className="setting-text">New key (copy now)</span>
+                    <input
+                      type="text"
+                      className="setting-input"
+                      style={{ width: "100%", maxWidth: "520px", fontFamily: "monospace" }}
+                      readOnly
+                      value={generatedApiKey}
+                      onFocus={(e) => e.target.select()}
+                    />
+                    <p className="setting-description">
+                      Add to <code>.env</code>:
+                      <br />
+                      <code>API_KEY=&quot;{generatedApiKey}&quot;</code>
+                      <br />
+                      Then restart PM2.
+                    </p>
+                    <button
+                      className="btn btn-secondary"
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard?.writeText(generatedApiKey);
+                      }}
+                    >
+                      Copy key
+                    </button>
+                  </div>
+                )}
+
+                <div className="setting-item" style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+                  <button
+                    className="btn btn-primary"
+                    type="button"
+                    onClick={handleGenerateApiKey}
+                    disabled={apiKeyBusy}
+                  >
+                    {apiKeyBusy ? "Working..." : "Generate API Key"}
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    type="button"
+                    onClick={handleClearApiKey}
+                    disabled={apiKeyBusy || !apiKeyStatus?.databaseConfigured}
+                  >
+                    Clear DB key
+                  </button>
+                </div>
+
+                <div className="setting-item">
+                  <h3>Endpoints</h3>
+                  <p className="setting-description">
+                    Authenticate with header <code>X-API-Key: &lt;key&gt;</code>{" "}
+                    or <code>Authorization: Bearer &lt;key&gt;</code>.
+                  </p>
+                  <ul className="setting-description">
+                    <li>
+                      <code>GET /api/v1/health</code> — public diagnostics
+                    </li>
+                    <li>
+                      <code>GET /api/v1/diagnostics</code> — DB + counts (API key)
+                    </li>
+                    <li>
+                      <code>GET /api/v1/playlists</code>
+                    </li>
+                    <li>
+                      <code>GET /api/v1/epg</code>
+                    </li>
+                    <li>
+                      <code>GET /api/v1/channel-lineup</code>
+                    </li>
+                    <li>
+                      <code>GET /api/v1/settings</code>
+                    </li>
+                    <li>
+                      <code>GET /api/v1/schedule</code>
+                    </li>
+                  </ul>
                 </div>
               </div>
             </div>

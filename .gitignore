@@ -15,6 +15,8 @@ client/dist/
 .env.production.local
 
 # Database
+data/*
+!data/.gitkeep
 data/*.db
 data/*.db-journal
 data/*.db-shm
@@ -83,14 +85,12 @@ DEPLOYMENT.md
 VERCEL_CHECKLIST.md
 readme-data.md
 
-# Prisma Generated Files
-/src/generated/prisma
+# Prisma 7 generated client is committed/uploaded for Synology
+# (schema-engine often crashes on NAS Node builds). Regenerate with:
+#   pnpm run prisma:generate
+/generated/prisma
 
 # Vercel
 .vercel
 .vercel/
 *.vercel.json.bak
-DATABASE_URL="file:./prisma/dev.db"
-PORT=3000
-SESSION_SECRET=local-dev-secret
-NODE_ENV=development

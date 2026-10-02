@@ -1,8 +1,9 @@
 import { Router, Request } from "express";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
 import userRepository from "../repositories/user.repository";
 import { UserRole } from "../types";
 import { requireAuth, requireAdmin } from "../middleware/auth.middleware";
+import { routeParam, routeParamInt } from "../utils/route-params";
 
 const router = Router();
 
@@ -104,7 +105,7 @@ router.post("/", requireAdmin, async (req, res) => {
  */
 router.put("/:id/role", requireAdmin, async (req, res) => {
   try {
-    const userId = parseInt(req.params.id);
+    const userId = routeParamInt(req.params.id);
     const { role } = req.body;
 
     if (!role || (role !== UserRole.ADMIN && role !== UserRole.USER)) {
@@ -139,7 +140,7 @@ router.put("/:id/role", requireAdmin, async (req, res) => {
  */
 router.put("/:id/password", async (req, res) => {
   try {
-    const userId = parseInt(req.params.id);
+    const userId = routeParamInt(req.params.id);
     const { password } = req.body;
 
     // Check permission (admin or self)
@@ -184,7 +185,7 @@ router.put("/:id/password", async (req, res) => {
  */
 router.delete("/:id", requireAdmin, async (req, res) => {
   try {
-    const userId = parseInt(req.params.id);
+    const userId = routeParamInt(req.params.id);
 
     // Don't allow users to delete themselves
     const session = getSession(req);
@@ -214,7 +215,7 @@ router.delete("/:id", requireAdmin, async (req, res) => {
  */
 router.post("/:id/reset-2fa", requireAdmin, async (req, res) => {
   try {
-    const userId = parseInt(req.params.id);
+    const userId = routeParamInt(req.params.id);
 
     // Check if user exists
     const user = await userRepository.findById(userId);

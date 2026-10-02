@@ -1,25 +1,19 @@
-/**
- * PM2 ecosystem config for IPTV Playlist Manager.
- * Usage:
- *   pm2 start ecosystem.config.cjs
- *   pm2 start ecosystem.config.cjs --env production
- */
+/** @see https://pm2.keymetrics.io/docs/usage/application-declaration/ */
 module.exports = {
   apps: [
     {
       name: "Playlists Manager",
-      script: "dist/server.js",
+      script: "./dist/server.js",
       cwd: __dirname,
-      instances: 1,
-      exec_mode: "fork",
-      watch: false,
+      // Same as EPG Handler: node:sqlite needs this on Synology Node 22.x builds.
+      // Harmless on Node 24+ where sqlite is stable.
+      node_args: process.env.PLAYLISTS_NODE_ARGS || "--experimental-sqlite",
       env: {
-        NODE_ENV: "development",
-        PORT: 3022,
-      },
-      env_production: {
         NODE_ENV: "production",
-        PORT: 3022,
+        PORT: 8084,
+        DATABASE_URL: "file:./data/playlists.db",
+        // Prefer setting API_KEY in .env; dotenv loads it at runtime.
+        // Keep this empty unless you intentionally embed a key in PM2 env.
       },
     },
   ],

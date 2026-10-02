@@ -1,8 +1,8 @@
-import express from "express";
+import express, { type Express } from "express";
 import cors from "cors";
 import path from "path";
-import dotenv from "dotenv";
-const session = require("express-session");
+import "dotenv/config";
+import session from "express-session";
 import playlistRoutes from "./routes/playlist.routes";
 import channelLineupRoutes from "./routes/channel-lineup.routes";
 import settingsRoutes from "./routes/settings.routes";
@@ -11,20 +11,19 @@ import userRoutes from "./routes/user.routes";
 import epgRoutes from "./routes/epg.routes";
 import publicPlaylistRoutes from "./routes/public-playlist.routes";
 import scheduleRoutes from "./routes/schedule.routes";
+import apiV1Routes from "./routes/api-v1.routes";
 import { PlaylistSyncJobService } from "./services/playlist-sync-job.service";
 import prisma from "./database/prisma";
 import { requireAuth } from "./middleware/auth.middleware";
-import { initDB } from "./database/prisma";
-
-// Load environment variables
-dotenv.config();
+import { initDB, checkDatabase } from "./database/prisma";
+import { ApiKeyService } from "./services/api-key.service";
 
 // Initialize database for local usage
 initDB().catch((error) => {
   console.error("Failed to initialize database:", error);
 });
 
-const app = express();
+const app: Express = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
@@ -71,12 +70,26 @@ app.use("/api/auth", authRoutes);
 // Public playlist access (no auth required, uses credentials in query params)
 app.use("/playlist", publicPlaylistRoutes);
 
-// Health check (no auth required)
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
+// Health check (no auth required) — includes SQLite probe for Synology debugging
+app.get("/api/health", async (_req, res) => {
+  const db = await checkDatabase();
+  res.status(db.ok ? 200 : 503).json({
+    status: db.ok ? "ok" : "degraded",
+    timestamp: new Date().toISOString(),
+    node: process.version,
+    sqliteAdapter: "vendored node:sqlite (Node 22+ / 24+)",
+    experimentalSqlite:
+      process.execArgv.includes("--experimental-sqlite") ||
+      (process.env.NODE_OPTIONS || "").includes("experimental-sqlite"),
+    database: db,
+    apiKeyConfigured: !!ApiKeyService.getEnvApiKey(),
+  });
 });
 
-// API Routes (auth is disabled; middleware injects default admin)
+// Versioned API (API key required except /api/v1/health)
+app.use("/api/v1", apiV1Routes);
+
+// API Routes (session OR API key)
 app.use("/api/playlists", requireAuth, playlistRoutes);
 app.use("/api/channel-lineup", requireAuth, channelLineupRoutes);
 app.use("/api/settings", requireAuth, settingsRoutes);
@@ -89,7 +102,8 @@ const clientBuildPath = path.join(__dirname, "../client/dist");
 app.use(express.static(clientBuildPath));
 
 // Serve index.html for all other routes (SPA support)
-app.get("*", (req, res) => {
+// Express 5 requires a named wildcard (path-to-regexp v8)
+app.get("/{*splat}", (req, res) => {
   res.sendFile(path.join(clientBuildPath, "index.html"));
 });
 

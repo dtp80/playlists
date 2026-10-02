@@ -2,7 +2,7 @@ import prisma from "../database/prisma";
 import { XtreamService } from "./xtream.service";
 import { M3UService } from "./m3u.service";
 import { PlaylistRepository } from "../repositories/playlist.repository";
-import { Channel, Category } from "@prisma/client";
+import { Channel, Category } from "../generated/prisma/client";
 import axios from "axios";
 
 export class PlaylistSyncJobService {

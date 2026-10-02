@@ -4,6 +4,7 @@ import { EPGService } from "../services/epg.service";
 import { EpgRepository } from "../repositories/epg.repository";
 import { EpgGroupRepository } from "../repositories/epg-group.repository";
 import { EpgJobService } from "../services/epg-job.service";
+import { routeParam, routeParamInt } from "../utils/route-params";
 
 const router = Router();
 
@@ -74,7 +75,7 @@ router.post("/", async (req: Request, res: Response) => {
  */
 router.get("/job/:id", async (req: Request, res: Response) => {
   const requestStartTime = Date.now();
-  const jobId = parseInt(req.params.id);
+  const jobId = routeParamInt(req.params.id);
   
   console.log(`\n=== 🔍 EPG Job Poll Request ===`);
   console.log(`Job ID: ${jobId}`);
@@ -85,7 +86,7 @@ router.get("/job/:id", async (req: Request, res: Response) => {
     console.log(`User ID: ${userId}`);
 
     if (isNaN(jobId)) {
-      console.log(`❌ Invalid job ID: ${req.params.id}`);
+      console.log(`❌ Invalid job ID: ${routeParam(req.params.id)}`);
       return res.status(400).json({ error: "Invalid job ID" });
     }
 
@@ -289,7 +290,7 @@ router.post("/import-small", async (req: Request, res: Response) => {
 router.put("/:id", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const id = parseInt(req.params.id);
+    const id = routeParamInt(req.params.id);
     const { name, url } = req.body;
 
     const updateData: any = {};
@@ -322,7 +323,7 @@ router.put("/:id", async (req: Request, res: Response) => {
 router.delete("/:id", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const id = parseInt(req.params.id);
+    const id = routeParamInt(req.params.id);
 
     const deleted = await EpgRepository.delete(id, userId);
 
@@ -343,7 +344,7 @@ router.delete("/:id", async (req: Request, res: Response) => {
 router.post("/:id/sync", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const epgFileId = parseInt(req.params.id);
+    const epgFileId = routeParamInt(req.params.id);
 
     if (isNaN(epgFileId)) {
       return res.status(400).json({ error: "Invalid EPG file ID" });
@@ -384,7 +385,7 @@ router.post("/:id/sync", async (req: Request, res: Response) => {
 router.post("/:id/import-json", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const epgFileId = parseInt(req.params.id);
+    const epgFileId = routeParamInt(req.params.id);
     if (isNaN(epgFileId)) return res.status(400).json({ error: "Invalid EPG file ID" });
 
     const epgFile = await EpgRepository.findById(epgFileId, userId);
@@ -487,7 +488,7 @@ router.post("/:id/import-json", async (req: Request, res: Response) => {
 router.get("/:id/export-json", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const epgFileId = parseInt(req.params.id);
+    const epgFileId = routeParamInt(req.params.id);
     if (isNaN(epgFileId)) return res.status(400).json({ error: "Invalid EPG file ID" });
 
     const epgFile = await EpgRepository.findById(epgFileId, userId);
@@ -542,7 +543,7 @@ router.get("/:id/export-json", async (req: Request, res: Response) => {
 router.get("/:id/export-xmltv", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const epgFileId = parseInt(req.params.id);
+    const epgFileId = routeParamInt(req.params.id);
     if (isNaN(epgFileId)) return res.status(400).json({ error: "Invalid EPG file ID" });
 
     const epgFile = await EpgRepository.findById(epgFileId, userId);
@@ -628,7 +629,7 @@ router.get("/:id/export-xmltv", async (req: Request, res: Response) => {
 router.put("/:id/set-default", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const epgFileId = parseInt(req.params.id);
+    const epgFileId = routeParamInt(req.params.id);
 
     if (isNaN(epgFileId)) {
       return res.status(400).json({ error: "Invalid EPG file ID" });
@@ -703,7 +704,7 @@ router.post("/groups", async (req: Request, res: Response) => {
 router.put("/groups/:id", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const epgGroupId = parseInt(req.params.id);
+    const epgGroupId = routeParamInt(req.params.id);
     const { name, url, epgFileIds } = req.body;
 
     if (isNaN(epgGroupId)) {
@@ -740,7 +741,7 @@ router.put("/groups/:id", async (req: Request, res: Response) => {
 router.delete("/groups/:id", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const epgGroupId = parseInt(req.params.id);
+    const epgGroupId = routeParamInt(req.params.id);
 
     if (isNaN(epgGroupId)) {
       return res.status(400).json({ error: "Invalid EPG group ID" });
@@ -765,7 +766,7 @@ router.delete("/groups/:id", async (req: Request, res: Response) => {
 router.put("/groups/:id/set-default", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const epgGroupId = parseInt(req.params.id);
+    const epgGroupId = routeParamInt(req.params.id);
 
     if (isNaN(epgGroupId)) {
       return res.status(400).json({ error: "Invalid EPG group ID" });

@@ -25,6 +25,13 @@ interface ParsedChannel {
 /**
  * Custom error for EPG files that are too large for current limits
  */
+
+const headerString = (value: unknown): string => {
+  if (Array.isArray(value)) return value[0] ?? "";
+  if (value == null) return "";
+  return String(value);
+};
+
 export class EPGFileTooLargeError extends Error {
   constructor(
     public compressedSizeMB: number,
@@ -93,8 +100,8 @@ export class EPGService {
       const isGzipped =
         url.endsWith(".gz") ||
         url.endsWith(".xml.gz") ||
-        response.headers["content-type"]?.includes("gzip") ||
-        response.headers["content-encoding"]?.includes("gzip");
+        headerString(response.headers["content-type"]).includes("gzip") ||
+        headerString(response.headers["content-encoding"]).includes("gzip");
 
       if (isGzipped || this.isGzipData(data)) {
         try {
@@ -342,12 +349,12 @@ export class EPGService {
       const writeStream = createWriteStream(tempFile);
 
       const totalBytesHeader = response.headers["content-length"];
-      const totalBytes = totalBytesHeader ? parseInt(totalBytesHeader, 10) : undefined;
+      const totalBytes = totalBytesHeader ? parseInt(headerString(totalBytesHeader), 10) : undefined;
       let isGzipped =
         url.endsWith(".gz") ||
         url.endsWith(".xml.gz") ||
-        response.headers["content-type"]?.includes("gzip") ||
-        response.headers["content-encoding"]?.includes("gzip");
+        headerString(response.headers["content-type"]).includes("gzip") ||
+        headerString(response.headers["content-encoding"]).includes("gzip");
 
       let bytes = 0;
       await new Promise<void>((resolve, reject) => {
@@ -415,7 +422,7 @@ export class EPGService {
         },
       });
       const lenHeader = headResp.headers["content-length"];
-      const len = lenHeader ? parseInt(lenHeader, 10) : undefined;
+      const len = lenHeader ? parseInt(headerString(lenHeader), 10) : undefined;
       if (len && len > 0 && len <= 50 * 1024 * 1024) {
         return await downloadAndParseBuffer();
       }
@@ -441,11 +448,11 @@ export class EPGService {
       const isGzipped =
         url.endsWith(".gz") ||
         url.endsWith(".xml.gz") ||
-        response.headers["content-type"]?.includes("gzip") ||
-        response.headers["content-encoding"]?.includes("gzip");
+        headerString(response.headers["content-type"]).includes("gzip") ||
+        headerString(response.headers["content-encoding"]).includes("gzip");
 
       const totalBytesHeader = response.headers["content-length"];
-      const totalBytes = totalBytesHeader ? parseInt(totalBytesHeader, 10) : undefined;
+      const totalBytes = totalBytesHeader ? parseInt(headerString(totalBytesHeader), 10) : undefined;
       const source: Readable = response.data as Readable;
 
       const parsed = await parseXmlStream(source, totalBytes, isGzipped, onProgress);
@@ -484,12 +491,12 @@ export class EPGService {
     const writeStream = createWriteStream(targetPath);
 
     const totalBytesHeader = response.headers["content-length"];
-    const totalBytes = totalBytesHeader ? parseInt(totalBytesHeader, 10) : undefined;
+    const totalBytes = totalBytesHeader ? parseInt(headerString(totalBytesHeader), 10) : undefined;
     let isGzipped =
       url.endsWith(".gz") ||
       url.endsWith(".xml.gz") ||
-      response.headers["content-type"]?.includes("gzip") ||
-      response.headers["content-encoding"]?.includes("gzip");
+      headerString(response.headers["content-type"]).includes("gzip") ||
+      headerString(response.headers["content-encoding"]).includes("gzip");
 
     let bytes = 0;
     await new Promise<void>((resolve, reject) => {

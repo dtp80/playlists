@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { UserRole } from "../types";
+import { ApiKeyService } from "../services/api-key.service";
 
 const defaultUser = {
   id: 1,
@@ -10,35 +11,74 @@ const defaultUser = {
   updatedAt: new Date().toISOString(),
 };
 
+function injectAdmin(req: Request) {
+  const session = (req as any).session || {};
+  session.user = { ...defaultUser };
+  (req as any).session = session;
+  (req as any).apiAuth = true;
+}
+
 /**
- * Authentication is disabled for local-only usage.
- * Inject a default admin user so downstream code keeps working.
+ * Session OR API key. Used by the existing UI routes.
  */
-export const requireAuth = (
+export const requireAuth = async (
   req: Request,
-  _res: Response,
+  res: Response,
   next: NextFunction
 ) => {
-  const session = (req as any).session || {};
-  if (!session.user) {
-    session.user = defaultUser;
-    (req as any).session = session;
+  try {
+    const apiKey = ApiKeyService.extractFromRequest(req);
+    if (apiKey) {
+      if (!(await ApiKeyService.isValid(apiKey))) {
+        return res.status(401).json({ error: "Invalid API key" });
+      }
+      injectAdmin(req);
+      return next();
+    }
+
+    const session = (req as any).session || {};
+    if (!session.user) {
+      session.user = { ...defaultUser };
+      (req as any).session = session;
+    }
+    next();
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || "Auth failed" });
   }
-  next();
 };
 
 /**
- * Admin check is a no-op because we always run as the default admin.
+ * API key required (X-API-Key or Authorization: Bearer).
  */
-export const requireAdmin = (
+export const requireApiKey = async (
   req: Request,
-  _res: Response,
+  res: Response,
   next: NextFunction
 ) => {
-  const session = (req as any).session || {};
-  if (!session.user) {
-    session.user = defaultUser;
-    (req as any).session = session;
+  try {
+    const apiKey = ApiKeyService.extractFromRequest(req);
+    if (!apiKey) {
+      return res.status(401).json({
+        error: "API key required. Pass X-API-Key or Authorization: Bearer <key>",
+      });
+    }
+    if (!(await ApiKeyService.isValid(apiKey))) {
+      return res.status(401).json({ error: "Invalid API key" });
+    }
+    injectAdmin(req);
+    next();
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || "Auth failed" });
   }
-  next();
+};
+
+/**
+ * Admin check — still injects default admin for local usage.
+ */
+export const requireAdmin = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  return requireAuth(req, res, next);
 };

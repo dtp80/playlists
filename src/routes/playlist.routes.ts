@@ -3,8 +3,9 @@ import { PlaylistRepository } from "../repositories/playlist.repository";
 import { XtreamService } from "../services/xtream.service";
 import { M3UService } from "../services/m3u.service";
 import { ExportService } from "../services/export.service";
-import { Playlist } from "@prisma/client";
+import { Playlist } from "../generated/prisma/client";
 import prisma, { isDebugMode } from "../database/prisma";
+import { routeParam, routeParamInt } from "../utils/route-params";
 
 const PlaylistType = {
   M3U: "m3u" as const,
@@ -248,7 +249,7 @@ router.put("/reorder", async (req: Request, res: Response) => {
 router.get("/:id", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const id = parseInt(req.params.id);
+    const id = routeParamInt(req.params.id);
     const playlist = await PlaylistRepository.findById(id, userId);
 
     if (!playlist) {
@@ -338,7 +339,7 @@ router.post("/", async (req: Request, res: Response) => {
 router.put("/:id", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const id = parseInt(req.params.id);
+    const id = routeParamInt(req.params.id);
     const {
       name,
       url,
@@ -419,7 +420,7 @@ router.put("/:id", async (req: Request, res: Response) => {
 router.delete("/:id", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const id = parseInt(req.params.id);
+    const id = routeParamInt(req.params.id);
     const deleted = await PlaylistRepository.delete(id, userId);
 
     if (!deleted) {
@@ -438,7 +439,7 @@ router.delete("/:id", async (req: Request, res: Response) => {
 router.post("/:id/sync-categories", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const id = parseInt(req.params.id);
+    const id = routeParamInt(req.params.id);
     const playlist = await PlaylistRepository.findById(id, userId);
 
     if (!playlist) {
@@ -504,7 +505,7 @@ router.post("/:id/sync-categories", async (req: Request, res: Response) => {
 router.post("/:id/categories/select", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const id = parseInt(req.params.id);
+    const id = routeParamInt(req.params.id);
     const { categoryIds } = req.body;
 
     if (!Array.isArray(categoryIds)) {
@@ -532,7 +533,7 @@ router.post("/:id/categories/select", async (req: Request, res: Response) => {
 router.post("/:id/sync", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const id = parseInt(req.params.id);
+    const id = routeParamInt(req.params.id);
     const categoryFilters = Array.isArray(req.body?.categoryIds)
       ? (req.body.categoryIds as string[])
       : undefined;
@@ -579,7 +580,7 @@ router.post("/:id/sync", async (req: Request, res: Response) => {
  */
 router.get("/:id/sync/job/:jobId", async (req: Request, res: Response) => {
   try {
-    const jobId = parseInt(req.params.jobId);
+    const jobId = routeParamInt(req.params.jobId);
 
     // Import the service
     const { PlaylistSyncJobService } = await import(
@@ -646,7 +647,7 @@ router.get("/:id/sync/job/:jobId", async (req: Request, res: Response) => {
 router.delete("/:id/sync/cleanup", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const playlistId = parseInt(req.params.id);
+    const playlistId = routeParamInt(req.params.id);
 
     // Verify playlist ownership
     const playlist = await PlaylistRepository.findById(playlistId, userId);
@@ -741,7 +742,7 @@ router.delete("/:id/sync/cleanup", async (req: Request, res: Response) => {
 router.get("/:id/categories", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const id = parseInt(req.params.id);
+    const id = routeParamInt(req.params.id);
     const returnFullList = req.query.full === "true";
 
     // Always fetch all categories from DB
@@ -795,7 +796,7 @@ router.get("/:id/channels", async (req: Request, res: Response) => {
   const startTime = Date.now();
   try {
     const userId = (req as any).session.user.id;
-    const id = parseInt(req.params.id);
+    const id = routeParamInt(req.params.id);
     const categoryId = req.query.categoryId as string | undefined;
     const search = req.query.search as string | undefined;
     const page = parseInt(req.query.page as string) || 1;
@@ -944,7 +945,7 @@ router.get("/:id/channels", async (req: Request, res: Response) => {
 router.get("/:id/export", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const id = parseInt(req.params.id);
+    const id = routeParamInt(req.params.id);
     const playlist = await PlaylistRepository.findById(id, userId);
 
     if (!playlist) {
@@ -1039,7 +1040,7 @@ router.get("/:id/export", async (req: Request, res: Response) => {
 router.post("/:id/export-custom", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const id = parseInt(req.params.id);
+    const id = routeParamInt(req.params.id);
     const { channelIds, categoryIds } = req.body;
 
     const playlist = await PlaylistRepository.findById(id, userId);
@@ -1124,7 +1125,7 @@ router.post("/:id/export-custom", async (req: Request, res: Response) => {
 router.get("/:id/export-json", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const id = parseInt(req.params.id);
+    const id = routeParamInt(req.params.id);
     const playlist = await PlaylistRepository.findById(id, userId);
 
     if (!playlist) {
@@ -1160,7 +1161,7 @@ router.get("/:id/export-json", async (req: Request, res: Response) => {
 router.post("/:id/export-json-custom", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const id = parseInt(req.params.id);
+    const id = routeParamInt(req.params.id);
     const { channelIds, categoryIds } = req.body;
 
     const playlist = await PlaylistRepository.findById(id, userId);
@@ -1221,7 +1222,7 @@ router.post("/:id/export-json-custom", async (req: Request, res: Response) => {
 router.post("/:id/import", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const playlistId = parseInt(req.params.id);
+    const playlistId = routeParamInt(req.params.id);
     const { channels: importedChannels } = req.body;
 
     if (!Array.isArray(importedChannels)) {
@@ -1260,8 +1261,8 @@ router.post("/:id/import", async (req: Request, res: Response) => {
 router.get("/:id/import/job/:jobId", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const playlistId = parseInt(req.params.id);
-    const jobId = parseInt(req.params.jobId);
+    const playlistId = routeParamInt(req.params.id);
+    const jobId = routeParamInt(req.params.jobId);
 
     const playlist = await PlaylistRepository.findById(playlistId, userId);
     if (!playlist) {
@@ -1299,7 +1300,7 @@ router.get("/:id/import/job/:jobId", async (req: Request, res: Response) => {
 router.post("/:id/import-old", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const playlistId = parseInt(req.params.id);
+    const playlistId = routeParamInt(req.params.id);
     const { channels: importedChannels } = req.body;
 
     if (!Array.isArray(importedChannels)) {
@@ -1594,7 +1595,7 @@ router.post("/:id/import-old", async (req: Request, res: Response) => {
 router.post("/:id/copy-mappings", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).session.user.id;
-    const targetPlaylistId = parseInt(req.params.id);
+    const targetPlaylistId = routeParamInt(req.params.id);
     const { sourcePlaylistId } = req.body;
 
     if (!sourcePlaylistId) {
@@ -1746,8 +1747,8 @@ router.put(
   "/:id/channels/:streamId/mapping",
   async (req: Request, res: Response) => {
     try {
-      const playlistId = parseInt(req.params.id);
-      const { streamId } = req.params;
+      const playlistId = routeParamInt(req.params.id);
+      const streamId = routeParam(req.params.streamId);
       const { name, logo, tvgId, extGrp } = req.body;
 
       if (!name || !logo) {
@@ -1786,8 +1787,8 @@ router.delete(
   "/:id/channels/:streamId/mapping",
   async (req: Request, res: Response) => {
     try {
-      const playlistId = parseInt(req.params.id);
-      const { streamId } = req.params;
+      const playlistId = routeParamInt(req.params.id);
+      const streamId = routeParam(req.params.streamId);
 
       const result = await prisma.channel.updateMany({
         where: {
@@ -1818,8 +1819,8 @@ router.put(
   async (req: Request, res: Response) => {
     try {
       const userId = (req as any).session.user.id;
-      const playlistId = parseInt(req.params.id);
-      const { streamId } = req.params;
+      const playlistId = routeParamInt(req.params.id);
+      const streamId = routeParam(req.params.streamId);
       const { isOperational, hasArchive } = req.body;
 
       const playlist = await PlaylistRepository.findById(playlistId, userId);

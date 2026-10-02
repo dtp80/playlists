@@ -1,10 +1,11 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
+// Prisma 7 uses the `prisma-client` generator with an explicit output path
+// (same pattern as dikotest / arnisales / customer-portal).
 
 generator client {
-  provider = "prisma-client-js"
-  // Driver adapter requires the client engine
-  engineType = "client"
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
 }
 
 datasource db {
